@@ -47,9 +47,9 @@ function progressReport(state) {
   };
 }
 
-export async function createStudio({ root = ROOT, dataDir, generate = generateWithGeminiBrowser, login = openLogin, listProfiles = listChromeProfiles, checkBrowser = checkExistingChrome, checkSession = checkGeminiSession } = {}) {
+export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, generate = generateWithGeminiBrowser, login = openLogin, listProfiles = listChromeProfiles, checkBrowser = checkExistingChrome, checkSession = checkGeminiSession } = {}) {
   const data = dataDir || (path.resolve(root) === path.resolve(ROOT) ? runtimeDataDirectory() : path.join(root, '.data'));
-  const defaultImages = path.join(root, 'output/images');
+  const defaultImages = defaultOutputDir || path.join(root, 'output/images');
   const profile = path.join(data, 'browser-profile'); const stateFile = path.join(data, 'state.json');
   await fs.mkdir(data, { recursive: true });
   const lockFile = path.join(data, 'server.lock');

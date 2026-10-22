@@ -10,7 +10,7 @@ if errorlevel 1 (
 )
 if not exist "node_modules\@steipete\oracle\dist\bin\oracle-cli.js" (
   echo Installing Oracle. Please wait...
-  call npm.cmd ci --ignore-scripts --no-audit --no-fund --cache .npm-cache
+  call npm.cmd ci --omit=dev --ignore-scripts --no-audit --no-fund --cache .npm-cache
   if errorlevel 1 (
     echo Oracle installation failed. Check your internet connection.
     pause
