@@ -35,7 +35,10 @@
     <section class="side-section" id="output-settings">
       <div class="section-title"><span>03</span><h2>Папка зображень</h2></div>
       <label class="field-label" for="output-folder">Папка для збереження та перевірки картинок</label>
-      <input id="output-folder" type="text" spellcheck="false" placeholder="C:\Pictures\Drones" aria-describedby="output-folder-hint">
+      <div class="folder-picker">
+        <input id="output-folder" type="text" spellcheck="false" placeholder="C:\Pictures\Drones" aria-describedby="output-folder-hint">
+        <button id="choose-output-folder" class="secondary" type="button" hidden>Обрати…</button>
+      </div>
       <small class="hint" id="output-folder-hint">Вставте повний шлях та збережіть. Знайдені тут картинки позначаться готовими, решта понять — у черзі. Файли зіставляються за номером і назвою поняття. Прогрес та історія старої папки не переносяться. Нову папку буде створено автоматично.</small>
       <button id="save-output-folder" class="secondary full">Зберегти папку</button>
       <button id="save-ready" class="secondary full">↓ Зберегти всі готові картинки</button>

@@ -43,7 +43,7 @@ async function runLauncher(t, { installed, npmFails = false, noNode = false } = 
     } else {
       assert.equal(await fs.readFile(path.join(app, 'started.txt'), 'utf8'), app);
       assert.match(result.stdout, /launch-ok/);
-      if (!installed) assert.equal((await fs.readFile(path.join(app, 'install.txt'), 'utf8')).trim(), 'ci --ignore-scripts --no-audit --no-fund --cache .npm-cache');
+      if (!installed) assert.equal((await fs.readFile(path.join(app, 'install.txt'), 'utf8')).trim(), 'ci --omit=dev --ignore-scripts --no-audit --no-fund --cache .npm-cache');
     }
   } finally {
     assert.equal(path.dirname(root), ROOT); assert.ok(path.basename(root).startsWith('.test-launcher-'));

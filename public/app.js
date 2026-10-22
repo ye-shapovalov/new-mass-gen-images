@@ -144,7 +144,7 @@ function render() {
     for (const profile of state.chromeProfiles || []) { const option = node('option', '', `${profile.name}${profile.account ? ' · ' + profile.account : ''}`); option.value = profile.id; options.push(option); }
     $('chrome-profile').replaceChildren(...options); $('chrome-profile').value = state.chromeProfile || '';
   }
-  for (const id of ['style', 'range', 'batch-size', 'request-delay', 'background', 'diagnostics', 'clear-diagnostics', 'output-folder', 'save-output-folder', 'save-settings', 'scan', 'login', 'import-button']) $(id).disabled = active() || savingReady;
+  for (const id of ['style', 'range', 'batch-size', 'request-delay', 'background', 'diagnostics', 'clear-diagnostics', 'output-folder', 'choose-output-folder', 'save-output-folder', 'save-settings', 'scan', 'login', 'import-button']) $(id).disabled = active() || savingReady;
   $('save-ready').disabled = active() || savingReady || !state.jobs.some(job => ['done', 'exists'].includes(job.status));
   renderBrowserMode();
   $('start').textContent = `▶ Генерувати пакет · ${state.nextBatch ?? state.queued}`;
@@ -161,6 +161,16 @@ $('style').addEventListener('input', () => { dirty = true; renderDetail(); }); $
 $('batch-size').addEventListener('change', () => dirty = true);
 $('request-delay').addEventListener('input', () => dirty = true);
 $('output-folder').addEventListener('input', () => dirty = true);
+if (window.newMassGenDesktop?.chooseOutputFolder) {
+  $('choose-output-folder').hidden = false;
+  listen('choose-output-folder', async () => {
+    const folder = await window.newMassGenDesktop.chooseOutputFolder();
+    if (!folder) return;
+    $('output-folder').value = folder;
+    dirty = true;
+    notify('Папку обрано. Натисніть «Зберегти папку», щоб застосувати її.');
+  });
+}
 $('background').addEventListener('change', () => dirty = true);
 $('diagnostics').addEventListener('change', () => dirty = true);
 $('browser-mode').addEventListener('change', () => { dirty = true; $('background').checked = $('browser-mode').value === 'dedicated'; renderBrowserMode(); });

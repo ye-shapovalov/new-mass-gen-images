@@ -3,5 +3,6 @@ node_modules/
 .data/
 api-token
 output/
+dist/
 *.log
 .test-*/

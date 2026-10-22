@@ -1,15 +1,65 @@
 {
   "name": "new-mass-gen",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "description": "Локальна Windows-студія для пакетної генерації освітніх ілюстрацій через Gemini.",
+  "author": "New Mass Gen Contributors",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24" },
+  "main": "desktop.mjs",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "start": "node server.mjs",
     "open": "node launch.mjs",
+    "desktop": "electron .",
+    "test:desktop": "electron . --smoke-test --disable-gpu",
+    "dist:win": "electron-builder --win nsis portable --x64",
+    "postinstall": "install-electron",
     "test": "node --test test/*.test.mjs",
     "check:background": "node scripts/check-background.mjs",
     "oracle": "oracle"
   },
-  "dependencies": { "@steipete/oracle": "0.21.6" }
+  "dependencies": {
+    "@steipete/oracle": "0.21.6"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "ua.newmassgen.desktop",
+    "productName": "New Mass Gen",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "*.mjs",
+      "preload.cjs",
+      "public/**/*",
+      "input.csv",
+      "scenes.json",
+      "package.json",
+      "!node_modules/fast-glob{,/**/*}",
+      "!node_modules/micromatch{,/**/*}",
+      "!node_modules/braces{,/**/*}",
+      "!test{,/**/*}",
+      "!scripts{,/**/*}"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "New-Mass-Gen-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "New-Mass-Gen-Portable-${version}.${ext}"
+    }
+  }
 }
