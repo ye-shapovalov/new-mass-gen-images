@@ -15,7 +15,7 @@ export const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const busy = () => Object.assign(new Error('Спочатку поставте чергу на паузу й дочекайтеся завершення зображення.'), { status: 409 });
 const invalid = message => Object.assign(new Error(message), { status: 400 });
 function outputDirectory(value) {
-  if (typeof value !== 'string' || !value.trim() || value.length > 32767 || value.includes('\0') || !path.isAbsolute(value.trim())) throw invalid('Вкажіть повний шлях до папки зображень, наприклад C:\\Pictures\\Drones.');
+  if (typeof value !== 'string' || !value.trim() || value.length > 32767 || value.includes('\0') || !path.isAbsolute(value.trim())) throw invalid('Вкажіть повний шлях до папки зображень, наприклад C:\\Pictures\\New Mass Gen.');
   return path.resolve(value.trim());
 }
 async function atomicJSON(file, data) {
@@ -68,7 +68,8 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
   const locked = fn => { const next = chain.then(fn); chain = next.catch(() => {}); return next; };
   const save = () => atomicJSON(stateFile, state);
   const requireIdle = () => { if (worker) throw busy(); };
-  const selected = () => selectedNumbers(state.range, state.jobs.length);
+  const maxJobNumber = () => Math.max(...state.jobs.map(job => job.number));
+  const selected = () => selectedNumbers(state.range, maxJobNumber());
   const accountKey = () => accountProfileKey(state.browserMode, state.chromeProfile);
   const accounts = () => state.geminiAccounts[accountKey()];
   const accountProfile = account => state.browserMode === 'dedicated' ? accountBrowserProfile(profile, account.id) : profile;
@@ -77,9 +78,47 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
     state.events.push({ at: new Date().toISOString(), message });
     state.events = state.events.slice(-200);
   };
-  function releaseQuotaPause() {
-    if (state.reason !== 'limit' || !accounts()?.some(account => account.enabled)) return;
-    for (const job of state.jobs) if (state.batch?.numbers.includes(job.number) && job.status === 'error' && job.errorKind === 'limit') {
+  const resetBatch = () => {
+    delete state.batch;
+    if (!state.reason || !state.jobs.some(job => job.errorKind === state.reason)) {
+      delete state.reason;
+      state.status = 'idle';
+    }
+  };
+  async function archiveImage(job) {
+    if (!job.filename || path.basename(job.filename) !== job.filename) return;
+    const source = path.join(state.outputDir, job.filename);
+    const archive = path.join(state.outputDir, '_previous');
+    await fs.mkdir(archive, { recursive: true });
+    await fs.rename(source, path.join(archive, `${Date.now()} - ${job.filename}`));
+  }
+  function resetJobForQueue(job, status) {
+    job.status = status; job.attempts = 0;
+    for (const key of ['error', 'errorKind', 'completedAt', 'startedAt', 'phase', 'log', 'geminiAccount', 'geminiProfile']) delete job[key];
+    if (status === 'pending') delete job.filename;
+  }
+  async function applyQueueSelection(range, regenerateSelected) {
+    const included = selectedNumbers(range, maxJobNumber());
+    let queued = 0; let held = 0; let regenerated = 0; let kept = 0;
+    for (const job of state.jobs) {
+      if (['done', 'exists'].includes(job.status)) {
+        if (!included.has(job.number)) continue;
+        if (!regenerateSelected) { kept++; continue; }
+        try { await archiveImage(job); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        resetJobForQueue(job, 'pending'); regenerated++; queued++;
+      } else if (included.has(job.number)) {
+        resetJobForQueue(job, 'pending'); queued++;
+      } else {
+        resetJobForQueue(job, 'held'); held++;
+      }
+    }
+    resetBatch();
+    log(`Застосовано вибір рядків: у черзі ${queued}, призупинено ${held}, готових залишено ${kept}, на перегенерацію ${regenerated}.`);
+  }
+  function releaseAccountPause() {
+    if (!['limit', 'capability'].includes(state.reason) || !accounts()?.some(account => account.enabled)) return;
+    for (const job of state.jobs) if (state.batch?.numbers.includes(job.number) && job.status === 'error' && job.errorKind === state.reason) {
       job.status = 'pending'; delete job.error; delete job.errorKind;
     }
     delete state.reason; log('Є увімкнений акаунт Gemini. Пакет можна продовжити кнопкою запуску.');
@@ -113,13 +152,13 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
       if (error.code !== 'ENOENT') throw new Error('Не вдалося прочитати локальний state.json. Файл збережено без змін.', { cause: error });
       const text = await fs.readFile(path.join(root, 'input.csv'), 'utf8');
       state = { version: 1, source: 'input.csv', style: DEFAULT_STYLE, range: '', batchSize: 25, diagnostics: false, status: 'idle', jobs: jobsFromCSV(parseCSV(text), 0, 1, scenes), events: [] };
-      log(`Завантажено ${state.jobs.length} понять із CSV.`);
+      log(`Завантажено ${state.jobs.length} рядків із CSV.`);
     }
     if (state.version !== 1 || !Array.isArray(state.jobs) || typeof state.style !== 'string' || !Array.isArray(state.events)) throw new Error('Невідомий формат стану; файл не змінено.');
     if (state.jobs.some(job => !job.scene && typeof scenes[job.name] === 'string' && scenes[job.name].trim())) {
       await atomicJSON(path.join(data, `backup-scenes-${Date.now()}.json`), state);
       for (const job of state.jobs) if (!job.scene && typeof scenes[job.name] === 'string') job.scene = scenes[job.name];
-      log('Відновлено сцени для відомих понять після імпорту CSV.');
+      log('Відновлено сцени для відомих рядків після імпорту CSV.');
     }
     state.batchSize ??= 25;
     state.outputDir = outputDirectory(state.outputDir ?? defaultImages);
@@ -223,9 +262,19 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
               log(`№${step.job.number}: ${error.message} Автоматичний повтор у новій сесії, спроба 2/2.`);
               await save(); return 'retry';
             }
+            if (error.kind === 'capability' && !pause) {
+              const unavailable = accounts().find(account => account.id === step.account.id);
+              if (unavailable) { unavailable.enabled = false; unavailable.capabilityAt = new Date().toISOString(); }
+              state.batch.unavailableAccounts ??= []; state.batch.unavailableAccounts.push(step.account.id);
+              if (accountIndex + 1 < state.batch.accounts.length) {
+                accountIndex++; step.job.status = 'pending'; delete step.job.error;
+                log(`Акаунт «${step.account.name}» не підтримує генерацію зображень: його вимкнено. Повторюємо №${step.job.number} на «${state.batch.accounts[accountIndex].name}».`);
+                await save(); return 'next-account';
+              }
+            }
             step.job.status = error.kind === 'interrupted' ? 'interrupted' : 'error';
             step.job.error = error.message; step.job.errorKind = error.kind || 'error';
-            if (['capability', 'tool-setup', 'timeout', 'refusal'].includes(error.kind) && !pause) {
+            if (['tool-setup', 'timeout', 'refusal'].includes(error.kind) && !pause) {
               log(`№${step.job.number}: ${error.message} Рядок залишено для перевірки; продовжуємо пакет.`);
               await save(); return 'continue';
             }
@@ -299,7 +348,7 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
             let next; try { next = validateGeminiAccount({ ...current, ...body, enabled: body.enabled ?? current?.enabled ?? true }); } catch (error) { throw invalid(error.message); }
             if (state.browserMode === 'existing' && list.some(account => account.id !== current?.id && geminiAccountIndex(account.url) === geminiAccountIndex(next.url))) throw invalid('Цей акаунт Gemini вже є у списку цього профілю.');
             if (current) {
-              if (next.enabled || next.url !== current.url) delete current.limitedAt;
+              if (next.enabled || next.url !== current.url) { delete current.limitedAt; delete current.capabilityAt; }
               Object.assign(current, next);
             } else list.push({ id: randomUUID(), ...next });
           } else if (action === 'account-move') {
@@ -308,7 +357,7 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
             const next = index + body.direction;
             if (next >= 0 && next < list.length) [list[index], list[next]] = [list[next], list[index]];
           } else throw invalid('Невідома дія з акаунтом.');
-          releaseQuotaPause(); await save(); return snapshot();
+          releaseAccountPause(); await save(); return snapshot();
         }
         if (action === 'login') { const account = accounts()?.find(account => account.enabled) || accounts()?.[0]; await login(account ? accountProfile(account) : profile, { root, browserMode: state.browserMode, chromeProfile: state.chromeProfile, geminiUrl: account ? accountURL(account) : DEFAULT_GEMINI_URL }); return snapshot(); }
         if (action === 'check-browser') {
@@ -322,15 +371,17 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
           const requestDelaySeconds = body.requestDelaySeconds === undefined ? state.requestDelaySeconds : body.requestDelaySeconds;
           const background = body.background ?? state.background;
           const diagnostics = body.diagnostics ?? state.diagnostics;
+          const applyRange = body.applyRange ?? false; const regenerateSelected = body.regenerateSelected ?? false;
           const browserMode = body.browserMode ?? state.browserMode; const chromeProfile = body.chromeProfile ?? state.chromeProfile;
           if (!['dedicated', 'existing'].includes(browserMode)) throw invalid('Некоректний режим Chrome.');
           if (typeof chromeProfile !== 'string' || (browserMode === 'existing' && !chromeProfiles.some(profile => profile.id === chromeProfile))) throw invalid('Оберіть наявний профіль Chrome зі списку.');
           if (browserMode === 'existing' && background) throw invalid('Наявний профіль працює у звичайному Chrome. Вимкніть прихований режим.');
           if (typeof background !== 'boolean') throw invalid('Некоректний фоновий режим.');
           if (typeof diagnostics !== 'boolean') throw invalid('Некоректний режим діагностики.');
+          if (typeof applyRange !== 'boolean' || typeof regenerateSelected !== 'boolean') throw invalid('Некоректне застосування вибору рядків.');
           if (!Number.isInteger(batchSize) || batchSize < 0 || batchSize > 5000) throw invalid('Розмір пакета: від 1 до 5000 або 0 для всіх незавершених.');
           if (!Number.isInteger(requestDelaySeconds) || requestDelaySeconds < 0 || requestDelaySeconds > 3600) throw invalid('Затримка між запитами: ціле число від 0 до 3600 секунд.');
-          selectedNumbers(body.range, state.jobs.length);
+          selectedNumbers(body.range, maxJobNumber());
           for (const job of state.jobs) buildPrompt(job, body.style);
           const outputDir = outputDirectory(body.outputDir === undefined ? state.outputDir : body.outputDir);
           if (outputDir !== state.outputDir || action === 'save-ready') {
@@ -370,9 +421,43 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
           if (!diagnostics) await clearDiagnosticFiles(data);
           state.requestDelaySeconds = requestDelaySeconds;
           state.browserMode = browserMode; state.chromeProfile = chromeProfile;
-          releaseQuotaPause();
+          if (applyRange) await applyQueueSelection(body.range, regenerateSelected);
+          releaseAccountPause();
         } else if (action === 'scan') await scan();
-        else if (action === 'retry') {
+        else if (action === 'job-update') {
+          const job = state.jobs.find(item => item.number === body.number);
+          if (!job || !['pending', 'held', 'error', 'interrupted'].includes(job.status)) throw invalid('Редагувати можна лише рядок, який ще не готовий. Для готового спочатку оберіть перегенерацію.');
+          if (typeof body.name !== 'string' || !body.name.trim() || body.name.trim().length > 500) throw invalid('Назва має містити від 1 до 500 символів.');
+          if (typeof body.description !== 'string' || body.description.length > 10000) throw invalid('Опис має бути до 10 000 символів.');
+          if (typeof body.scene !== 'string' || body.scene.length > 10000) throw invalid('Опис сцени має бути до 10 000 символів.');
+          const held = job.status === 'held';
+          Object.assign(job, { name: body.name.trim(), description: body.description.trim(), scene: body.scene.trim(), status: held ? 'held' : 'pending', attempts: 0 });
+          for (const key of ['error', 'errorKind', 'filename', 'completedAt', 'startedAt', 'phase', 'log', 'geminiAccount', 'geminiProfile']) delete job[key];
+          resetBatch(); await scan(); log(`№${job.number} відредаговано.`);
+        } else if (action === 'job-hold') {
+          const job = state.jobs.find(item => item.number === body.number);
+          if (!job || !['pending', 'error', 'interrupted'].includes(job.status)) throw invalid('Призупинити можна лише незавершений рядок.');
+          job.status = 'held'; delete job.error; delete job.errorKind; resetBatch(); log(`№${job.number} призупинено й виключено з черги.`);
+        } else if (action === 'job-resume') {
+          const job = state.jobs.find(item => item.number === body.number);
+          if (!job || job.status !== 'held') throw invalid('Цей рядок не призупинений.');
+          job.status = 'pending'; resetBatch(); log(`№${job.number} повернено в чергу.`);
+        } else if (action === 'job-regenerate') {
+          const job = state.jobs.find(item => item.number === body.number);
+          if (!job || !['done', 'exists'].includes(job.status)) throw invalid('Перегенерувати можна лише готове зображення.');
+          try { await archiveImage(job); }
+          catch (error) { if (error.code !== 'ENOENT') throw error; }
+          job.status = 'pending'; job.attempts = 0;
+          for (const key of ['error', 'errorKind', 'filename', 'completedAt', 'startedAt', 'phase', 'log', 'geminiAccount', 'geminiProfile']) delete job[key];
+          resetBatch(); log(`№${job.number} поставлено на перегенерацію. Попереднє зображення збережено в папці _previous.`);
+        } else if (action === 'job-delete') {
+          if (state.jobs.length === 1) throw invalid('У серії має залишитися хоча б один рядок.');
+          const index = state.jobs.findIndex(item => item.number === body.number);
+          if (index < 0) throw invalid('Рядок не знайдено.');
+          const [job] = state.jobs.splice(index, 1);
+          state.range = ''; resetBatch();
+          log(`№${job.number} «${job.name}» видалено з проєкту${job.filename ? '; файл зображення залишено в папці' : ''}.`);
+        } else if (action === 'retry') {
           const job = state.jobs.find(item => item.number === body.number);
           if (!job || !['error', 'interrupted'].includes(job.status)) throw invalid('Оберіть рядок із помилкою або перерваним запитом.');
           if (['limit', 'login'].includes(state.reason) && job.errorKind === state.reason) delete state.reason;
@@ -382,7 +467,7 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
           const jobs = jobsFromCSV(parseCSV(body.csv), body.nameColumn, body.descriptionColumn, scenes);
           await atomicJSON(path.join(data, `backup-${Date.now()}.json`), state);
           state.jobs = jobs; state.source = String(body.filename || 'CSV').slice(0, 200); state.range = ''; state.status = 'idle'; delete state.reason; delete state.batch;
-          log(`Імпортовано ${jobs.length} понять. Попередній стан збережено в локальному резервному файлі.`); await scan();
+          log(`Імпортовано ${jobs.length} рядків. Попередній стан збережено в локальному резервному файлі.`); await scan();
         } else if (action === 'start') {
           if (['limit', 'login'].includes(state.reason)) throw invalid('Gemini зупинив пакет через ліміт або вхід. Після відновлення доступу натисніть «Повторити цей рядок».');
           const enabledAccounts = accounts()?.filter(account => account.enabled);
@@ -396,7 +481,7 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
           await scan();
           const included = selected();
           const pending = state.jobs.filter(job => included.has(job.number) && job.status === 'pending');
-          if (!pending.length) throw invalid('У вибраному діапазоні немає незавершених понять.');
+          if (!pending.length) throw invalid('У вибраному діапазоні немає незавершених рядків.');
           state.batch = { numbers: pending.slice(0, state.batchSize || pending.length).map(job => job.number), accounts: structuredClone(enabledAccounts), startedAt: new Date().toISOString() };
           log(`Запущено пакет: ${state.batch.numbers.length} зображень.`);
           pause = false; controller = new AbortController(); state.status = 'running'; delete state.reason;

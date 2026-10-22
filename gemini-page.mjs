@@ -34,7 +34,7 @@ export function isTextOnlyRefusal(state) {
 }
 
 export function isCapabilityRefusal(text) {
-  return /i(?:'m| am) (?:just|only) (?:a )?(?:text|language) model|я (?:лише|тільки) мовна модель|я не маю[^.!?\n]{0,100}функці[йї]/i.test(text || '');
+  return /i(?:'m| am) (?:just|only) (?:a )?(?:text|language) model|я (?:лише|тільки) мовна модель|я не маю[^.!?\n]{0,100}функці[йї]|я (?:просто|лишь|только) языковая модель|таких возможност(?:ей|и) у меня нет|таких можливост(?:ей|і) у мене немає/i.test(text || '');
 }
 
 export function clickImageTool() {

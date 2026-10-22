@@ -1,4 +1,4 @@
-export const DEFAULT_STYLE = `Мінімалістична технічна освітня ілюстрація з м’яким об’ємом, чіткими формами та матовими поверхнями. Приглушена синьо-фіолетова палітра: navy, indigo, dusty violet, soft blue-gray. М’яке розсіяне світло, світлий синьо-сірий фон. Одна проста впізнавана сцена. Без неону, тексту, літер, цифр, підписів і логотипів. Без колажів або кількох панелей.`;
+export const DEFAULT_STYLE = `Minimalist product illustration with soft volume, clear shapes, and matte surfaces. Natural muted colors, soft diffused light, and a light neutral background. One simple recognizable scene. No neon, text, letters, numbers, captions, logos, collages, or multiple panels.`;
 
 export function parseCSV(input) {
   const text = String(input).replace(/^\uFEFF/, '');
@@ -55,7 +55,7 @@ export function jobsFromCSV(table, nameColumn = 0, descriptionColumn = 1, scenes
 }
 
 export function buildPrompt(job, style) {
-  const prompt = `Створи ОДНЕ окреме квадратне зображення 1:1 для освітньої серії про дрони.\n\nТермін: «${job.name}».\nКонтекст поняття: ${job.description}\n${job.scene ? `Сцена: ${job.scene}\n` : ''}\nЄдиний стиль серії: ${style.trim()}\n\nЗобрази саме це поняття. Для військових термінів використовуй спокійну музейну або навчальну сцену без бойових інструкцій. Згенеруй саме зображення, не опис або промпт.`;
+  const prompt = `Use the active Create image tool now. Create exactly ONE standalone square 1:1 image for a consistent illustration series.\n\nSubject: «${job.name}».\nDescription or context: ${job.description}\n${job.scene ? `Scene: ${job.scene}\n` : ''}\nShared visual style: ${style.trim()}\n\nRender the subject itself as an image. Return the generated image only, not an explanation, description, or rewritten prompt.`;
   if (!style.trim() || prompt.length > 30000) throw new Error('Вкажіть стиль; загальний запит має бути до 30 000 символів.');
   return prompt;
 }
@@ -80,7 +80,7 @@ export function selectedNumbers(expression, max) {
   for (const part of expression.split(/[;,]/)) {
     const match = part.trim().match(/^(\d+)(?:\s*[-–—]\s*(\d+))?$/);
     const start = Number(match?.[1]); const end = Number(match?.[2] || match?.[1]);
-    if (!match || start < 1 || end < start || end > max) throw new Error(`Вкажіть номери від 1 до ${max}, наприклад 27-${max} або 1; 4; 8-12.`);
+    if (!match || start < 1 || end < start || end > max) throw new Error(`Вкажіть номери від 1 до ${max}, наприклад 1-3 або 1,3,5,7-10.`);
     for (let n = start; n <= end; n++) result.add(n);
   }
   return result;

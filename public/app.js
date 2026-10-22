@@ -1,9 +1,9 @@
-import { buildPrompt } from '/core.mjs';
+import { buildPrompt, selectedNumbers } from '/core.mjs';
 import { accountProfileKey, DEFAULT_GEMINI_URL } from '/gemini-accounts.mjs';
 const $ = id => document.getElementById(id);
-const labels = { pending: 'У черзі', exists: 'Вже збережено', done: 'Готово', running: 'Генерація', error: 'Помилка', interrupted: 'Перервано' };
+const labels = { pending: 'У черзі', held: 'Призупинено', exists: 'Вже збережено', done: 'Готово', running: 'Генерація', error: 'Помилка', interrupted: 'Перервано' };
 const runLabels = { idle: 'Готово до запуску пакета', paused: 'Пакет на паузі', pausing: 'Зупиняємо після поточного зображення', running: 'Генеруємо пакет автоматично', complete: 'Пакет завершено' };
-let state, chosen, filter = 'all', grid = false, dirty = false, csv, csvName, noticeTimer, renderingKey;
+let state, chosen, filter = 'all', grid = false, dirty = false, rangeDirty = false, csv, csvName, noticeTimer, renderingKey;
 let accountsRenderingKey, savingReady = false;
 function renderBrowserMode() {
   const existing = $('browser-mode').value === 'existing';
@@ -52,7 +52,7 @@ function renderAccounts() {
         } catch (error) { notify(error.message); }
       }); controls.append(move);
     }
-    card.append(node('small', 'account-position', `Акаунт ${index + 1}${account.limitedAt ? ' · Ліміт Gemini' : ''}`), name);
+    card.append(node('small', 'account-position', `Акаунт ${index + 1}${account.limitedAt ? ' · Ліміт Gemini' : account.capabilityAt ? ' · Немає генерації зображень' : ''}`), name);
     if (!dedicated) card.append(url);
     card.append(controls);
     if (dedicated) {
@@ -85,11 +85,30 @@ async function request(action, body = {}) {
 async function action(name, body = {}) { state = await request(name, body); render(); }
 function listen(id, fn) { $(id).addEventListener('click', () => Promise.resolve().then(fn).catch(error => notify(error.message))); }
 const active = () => ['running', 'pausing'].includes(state?.status);
+function validateRange() {
+  if (!state?.jobs?.length) return true;
+  const input = $('range'); const hint = $('range-hint');
+  try {
+    const max = Math.max(...state.jobs.map(job => job.number));
+    const numbers = selectedNumbers(input.value, max);
+    const selected = state.jobs.filter(job => numbers.has(job.number));
+    const completed = selected.filter(job => ['done', 'exists'].includes(job.status)).length;
+    const queueable = selected.length - completed;
+    const heldOutside = state.jobs.filter(job => !numbers.has(job.number) && !['done', 'exists'].includes(job.status)).length;
+    input.setCustomValidity(''); hint.classList.remove('invalid');
+    hint.textContent = input.value.trim()
+      ? `Вибрано: ${selected.length}. Стануть у чергу: ${queueable}. Будуть призупинені: ${heldOutside}.${completed ? ` Уже готові: ${completed} — під час збереження з’явиться запит про перегенерацію.` : ''}`
+      : `Усі ${queueable} незавершених рядків стануть у чергу.${completed ? ` Готові: ${completed} — під час збереження з’явиться запит про перегенерацію.` : ''}`;
+    return true;
+  } catch (error) {
+    input.setCustomValidity(error.message); hint.classList.add('invalid'); hint.textContent = error.message; return false;
+  }
+}
 function status(job) { return node('span', `status ${job.status}`, labels[job.status] || job.status); }
 function renderJobs() {
   const search = $('search').value.toLocaleLowerCase('uk');
   const jobs = state.jobs.filter(job => (!search || `${job.name} ${job.description}`.toLocaleLowerCase('uk').includes(search)) &&
-    (filter === 'all' || (filter === 'pending' && job.selected && job.status === 'pending') || (filter === 'done' && ['done', 'exists'].includes(job.status)) || (filter === 'error' && ['error', 'interrupted'].includes(job.status))));
+    (filter === 'all' || (filter === 'pending' && job.selected && ['pending', 'held'].includes(job.status)) || (filter === 'done' && ['done', 'exists'].includes(job.status)) || (filter === 'error' && ['error', 'interrupted'].includes(job.status))));
   $('visible-count').textContent = jobs.length;
   $('jobs').classList.toggle('grid', grid); const fragment = document.createDocumentFragment();
   for (const job of jobs) {
@@ -100,20 +119,57 @@ function renderJobs() {
     const text = node('span', 'job-text'); text.append(node('strong', '', job.name), node('small', '', job.description));
     button.append(text, status(job)); button.addEventListener('click', () => { chosen = job.number; renderJobs(); renderDetail(); }); fragment.append(button);
   }
-  if (!jobs.length) fragment.append(node('div', 'empty', 'Немає понять за цим фільтром.'));
+  if (!jobs.length) fragment.append(node('div', 'empty', 'Немає рядків за цим фільтром.'));
   const scroll = $('jobs').scrollTop; $('jobs').replaceChildren(fragment); $('jobs').scrollTop = scroll;
 }
 function renderDetail() {
   const job = state.jobs.find(item => item.number === chosen) || state.jobs[0]; const detail = $('detail'); detail.replaceChildren();
   if (!job) return;
-  detail.append(node('div', 'detail-eyebrow', `ПЕРЕГЛЯД ПОНЯТТЯ / ${String(job.number).padStart(3, '0')}`));
+  detail.append(node('div', 'detail-eyebrow', `ПЕРЕГЛЯД РЯДКА / ${String(job.number).padStart(3, '0')}`));
   if (job.filename) { const link = node('a'); link.href = `/images/${job.number}`; link.target = '_blank'; const img = node('img', 'detail-image'); img.src = link.href; img.alt = job.name; link.append(img); detail.append(link); }
-  else { const placeholder = node('div', 'detail-image empty-image'); placeholder.append(node('span', '', '◇'), node('small', '', job.status === 'running' ? 'Ілюстрація створюється…' : 'Тут з’явиться ілюстрація')); detail.append(placeholder); }
+  else { const placeholder = node('div', 'detail-image empty-image'); placeholder.append(node('span', '', '◇'), node('small', '', job.status === 'running' ? 'Ілюстрація створюється…' : job.status === 'held' ? 'Цей рядок призупинено' : 'Тут з’явиться ілюстрація')); detail.append(placeholder); }
   detail.append(node('h3', '', job.name), status(job), node('p', 'detail-description', job.description));
   if (job.geminiAccount) detail.append(node('p', 'detail-description', `Акаунт Gemini: ${job.geminiAccount.name}`));
   if (job.filename) detail.append(node('p', 'hint image-folder', `Папка: ${state.outputDir}`));
   if (job.error) detail.append(node('p', 'error-detail', job.error));
+  if (['capability', 'refusal', 'tool-setup'].includes(job.errorKind)) {
+    const help = node('div', 'generation-help');
+    help.append(node('strong', '', job.errorKind === 'capability' ? 'Gemini відповів текстом замість картинки' : job.errorKind === 'refusal' ? 'Gemini відмовився створити цю картинку' : 'Не вдалося ввімкнути Create image'));
+    help.append(node('p', '', job.errorKind === 'capability'
+      ? 'Режим Create image було вибрано, але цей акаунт відповів як звичайний чат. Причиною може бути недоступна для акаунта генерація, стан сесії або нерозпізнаний опис.'
+      : job.errorKind === 'refusal'
+        ? 'Уточніть безпечну, нейтральну сцену без двозначних формулювань і повторіть рядок.'
+        : 'Відкрийте вхід цього акаунта й перевірте, чи є в Gemini інструмент Create image.'));
+    help.append(node('p', '', 'Перевірка: вручну надішліть цьому акаунту “Create one square image of a red apple”. Якщо картинка не створюється — використайте інший акаунт. Якщо створюється — відредагуйте рядок і, за можливості, напишіть назву та опис англійською.'));
+    detail.append(help);
+  }
   if (['error', 'interrupted'].includes(job.status)) { const retry = node('button', 'primary full', '↻ Повторити цей рядок'); retry.disabled = active(); retry.addEventListener('click', () => action('retry', { number: job.number }).catch(error => notify(error.message))); detail.append(retry); }
+  const controls = node('div', 'row-actions');
+  if (job.status === 'held') {
+    const resume = node('button', 'outline', '▶ Повернути в чергу'); resume.disabled = active();
+    resume.addEventListener('click', () => action('job-resume', { number: job.number }).then(() => notify('Рядок повернено в чергу.')).catch(error => notify(error.message))); controls.append(resume);
+  } else if (['pending', 'error', 'interrupted'].includes(job.status)) {
+    const hold = node('button', 'outline', 'Ⅱ Призупинити рядок'); hold.disabled = active();
+    hold.addEventListener('click', () => action('job-hold', { number: job.number }).then(() => notify('Рядок призупинено. Решта черги працюватиме без нього.')).catch(error => notify(error.message))); controls.append(hold);
+  }
+  if (['done', 'exists'].includes(job.status)) {
+    const regenerate = node('button', 'outline', '↻ Перегенерувати'); regenerate.disabled = active();
+    regenerate.addEventListener('click', () => action('job-regenerate', { number: job.number }).then(() => notify('Рядок поставлено в чергу. Попереднє зображення збережено в папці _previous.')).catch(error => notify(error.message))); controls.append(regenerate);
+  }
+  const remove = node('button', 'outline danger', 'Видалити рядок'); remove.disabled = active() || state.jobs.length === 1;
+  remove.addEventListener('click', () => {
+    if (!window.confirm(`Видалити рядок №${job.number} «${job.name}»? Файл готового зображення, якщо він є, залишиться у папці.`)) return;
+    action('job-delete', { number: job.number }).then(() => notify('Рядок видалено з проєкту.')).catch(error => notify(error.message));
+  }); controls.append(remove); detail.append(controls);
+  if (['pending', 'held', 'error', 'interrupted'].includes(job.status)) {
+    const editor = node('details', 'job-editor'); editor.append(node('summary', '', 'Редагувати рядок'));
+    const nameLabel = node('label', '', 'Назва'); const name = node('input'); name.value = job.name; name.maxLength = 500; nameLabel.append(name);
+    const descriptionLabel = node('label', '', 'Опис або контекст'); const description = node('textarea'); description.value = job.description; description.maxLength = 10000; description.rows = 5; descriptionLabel.append(description);
+    const sceneLabel = node('label', '', 'Сцена (необов’язково)'); const scene = node('textarea'); scene.value = job.scene || ''; scene.maxLength = 10000; scene.rows = 3; sceneLabel.append(scene);
+    const saveRow = node('button', 'primary full', 'Зберегти рядок'); saveRow.disabled = active();
+    saveRow.addEventListener('click', () => action('job-update', { number: job.number, name: name.value, description: description.value, scene: scene.value }).then(() => notify('Рядок оновлено.')).catch(error => notify(error.message)));
+    editor.append(nameLabel, descriptionLabel, sceneLabel, saveRow); detail.append(editor);
+  }
   if (job.log) { const log = node('a', 'outline', 'Відкрити журнал запиту ↗'); log.href = `/logs/${job.number}`; log.target = '_blank'; detail.append(log); }
   if (job.filename) { const download = node('a', 'outline', '↓ Завантажити зображення'); download.href = `/images/${job.number}`; download.download = job.filename; detail.append(download); }
   const disclosure = node('details'); disclosure.append(node('summary', '', 'Переглянути запит до Gemini'));
@@ -125,19 +181,20 @@ function renderDetail() {
 function render() {
   const done = state.jobs.filter(job => ['done', 'exists'].includes(job.status)).length; const percent = Math.round(done / state.jobs.length * 100);
   if (!chosen || !state.jobs.some(job => job.number === chosen)) chosen = state.jobs.find(job => state.reason && job.errorKind === state.reason)?.number || state.jobs.find(job => job.status === 'pending')?.number || state.jobs[0]?.number;
-  $('source-label').textContent = `${state.source} · ${state.jobs.length} понять`;
+  $('source-label').textContent = `${state.source} · ${state.jobs.length} рядків`;
   $('total').textContent = state.jobs.length; $('done').textContent = done; $('pending').textContent = state.queued; $('percent').textContent = `${percent}%`; $('progress').value = percent;
-  $('run-label').textContent = state.status === 'paused' && state.reason === 'limit' ? 'Ліміт Gemini — пакет на паузі' : state.status === 'complete' && state.batchFailed ? 'Пакет завершено з помилками' : runLabels[state.status] || state.status;
+  $('run-label').textContent = state.status === 'paused' && state.reason === 'limit' ? 'Ліміт Gemini — пакет на паузі' : state.status === 'paused' && state.reason === 'capability' ? 'Акаунти не підтримують генерацію зображень' : state.status === 'complete' && state.batchFailed ? 'Пакет завершено з помилками' : runLabels[state.status] || state.status;
   const current = state.jobs.find(job => job.status === 'running');
   const waitSeconds = Math.max(0, Math.ceil((Date.parse(state.waitingUntil) - Date.now()) / 1000));
   if (state.status === 'running' && state.waitingUntil) $('run-label').textContent = 'Очікуємо перед наступним запитом';
   const elapsed = current ? Math.max(0, Math.floor((Date.now() - Date.parse(current.startedAt)) / 1000)) : 0;
-  $('run-detail').textContent = state.status === 'running' && state.waitingUntil ? `Затримка між запитами: ще ${waitSeconds} с · збережено в пакеті: ${state.batchDone || 0}/${state.batch?.numbers.length || 0}.` : current ? `Пакет: ${state.batchDone || 0}/${state.batch?.numbers.length || 1} · №${current.number} · ${current.name} · акаунт: ${current.geminiAccount?.name || 'Основний'} · ${current.phase || 'Починаємо спробу…'} · ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}` :
+  $('run-detail').textContent = state.status === 'running' && state.waitingUntil ? `Затримка між запитами: ще ${waitSeconds} с · збережено в пакеті: ${state.batchDone || 0}/${state.batch?.numbers.length || 0}.` : current ? `Пакет: ${state.batchDone || 0}/${state.batch?.numbers.length || 1} · №${current.number} · ${current.name} · акаунт: ${current.geminiAccount?.name || 'Основний'} · спроба ${Math.min(current.attempts || 1, 2)}/2 · ${current.phase || 'Починаємо спробу…'} · ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}` :
     `${state.status === 'paused' ? (state.jobs.find(job => job.errorKind === state.reason)?.error || state.jobs.find(job => job.error)?.error || '') + ' ' : ''}${state.batchFailed ? `Помилок у пакеті: ${state.batchFailed}. ` : ''}Наступний пакет: ${state.nextBatch ?? state.queued} · у черзі всього: ${state.queued}`;
   $('status-dot').classList.toggle('running', active());
   $('tools-status').textContent = `${state.oracle ? 'Сесії Chrome: Oracle 0.21.6' : '✕ Oracle відсутній'} · ${state.chrome ? '✓ Chrome' : '✕ Chrome відсутній'}`;
   $('output-dir').textContent = state.outputDir;
   if (!dirty) { $('style').value = state.style; $('range').value = state.range; $('batch-size').value = state.batchSize ?? 25; $('request-delay').value = state.requestDelaySeconds ?? 30; $('background').checked = state.background !== false; $('diagnostics').checked = state.diagnostics === true; $('output-folder').value = state.outputDir; }
+  validateRange();
   if (!dirty) {
     $('browser-mode').value = state.browserMode || 'dedicated';
     const options = [node('option', '', 'Оберіть профіль…')]; options[0].value = '';
@@ -148,7 +205,7 @@ function render() {
   $('save-ready').disabled = active() || savingReady || !state.jobs.some(job => ['done', 'exists'].includes(job.status));
   renderBrowserMode();
   $('start').textContent = `▶ Генерувати пакет · ${state.nextBatch ?? state.queued}`;
-  $('start').disabled = active() || savingReady || ['limit', 'login'].includes(state.reason) || !state.oracle || !state.chrome || state.queued === 0;
+  $('start').disabled = active() || savingReady || ['limit', 'login', 'capability'].includes(state.reason) || !state.oracle || !state.chrome || state.queued === 0;
   $('pause').disabled = !active() || state.status === 'pausing';
   $('stop').disabled = !active();
   const key = JSON.stringify([state.jobs, chosen, grid, filter, $('search').value]);
@@ -156,8 +213,23 @@ function render() {
   const events = state.events.slice(-4).reverse().map(event => { const li = node('li'); const time = node('time', '', new Date(event.at).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' })); li.append(time, document.createTextNode(event.message)); return li; });
   $('events').replaceChildren(...events);
 }
-async function saveSettings(command = 'settings') { state = await request(command, { style: $('style').value, range: $('range').value, batchSize: Number($('batch-size').value), requestDelaySeconds: $('request-delay').value === '' ? null : Number($('request-delay').value), background: $('background').checked, diagnostics: $('diagnostics').checked, browserMode: $('browser-mode').value, chromeProfile: $('chrome-profile').value, outputDir: $('output-folder').value }); dirty = false; render(); }
-$('style').addEventListener('input', () => { dirty = true; renderDetail(); }); $('range').addEventListener('input', () => dirty = true);
+async function askRegeneration(count) {
+  if (!count) return false;
+  $('regenerate-count').textContent = count;
+  const dialog = $('regenerate-dialog'); dialog.returnValue = 'keep'; dialog.showModal();
+  await new Promise(resolve => dialog.addEventListener('close', resolve, { once: true }));
+  return dialog.returnValue === 'regenerate';
+}
+async function saveSettings(command = 'settings') {
+  if (!validateRange()) { $('range').reportValidity(); throw new Error($('range').validationMessage); }
+  const applyRange = rangeDirty;
+  const numbers = selectedNumbers($('range').value, Math.max(...state.jobs.map(job => job.number)));
+  const completed = applyRange ? state.jobs.filter(job => numbers.has(job.number) && ['done', 'exists'].includes(job.status)).length : 0;
+  const regenerateSelected = await askRegeneration(completed);
+  state = await request(command, { style: $('style').value, range: $('range').value, applyRange, regenerateSelected, batchSize: Number($('batch-size').value), requestDelaySeconds: $('request-delay').value === '' ? null : Number($('request-delay').value), background: $('background').checked, diagnostics: $('diagnostics').checked, browserMode: $('browser-mode').value, chromeProfile: $('chrome-profile').value, outputDir: $('output-folder').value });
+  dirty = false; rangeDirty = false; render();
+}
+$('style').addEventListener('input', () => { dirty = true; renderDetail(); }); $('range').addEventListener('input', () => { dirty = true; rangeDirty = $('range').value !== state.range; validateRange(); });
 $('batch-size').addEventListener('change', () => dirty = true);
 $('request-delay').addEventListener('input', () => dirty = true);
 $('output-folder').addEventListener('input', () => dirty = true);
@@ -206,13 +278,13 @@ $('csv-file').addEventListener('change', async event => {
     if (file.size > 5_000_000) throw new Error('CSV має бути до 5 МБ.');
     csv = await file.text(); csvName = file.name; const preview = await request('preview', { csv });
     for (const id of ['name-column', 'description-column']) { $(id).replaceChildren(...preview.headers.map((header, index) => { const option = node('option', '', header); option.value = index; return option; })); }
-    $('description-column').value = Math.min(1, preview.headers.length - 1); $('import-summary').textContent = `${csvName}: ${preview.total} понять. Перевірте відповідність колонок.`;
+    $('description-column').value = Math.min(1, preview.headers.length - 1); $('import-summary').textContent = `${csvName}: ${preview.total} рядків. Перевірте відповідність колонок.`;
     $('import-dialog').showModal();
   } catch (error) { notify(error.message); } finally { event.target.value = ''; }
 });
 $('import-form').addEventListener('submit', async event => {
   event.preventDefault();
-  try { await action('import', { csv, filename: csvName, nameColumn: Number($('name-column').value), descriptionColumn: Number($('description-column').value) }); chosen = undefined; dirty = false; render(); $('import-dialog').close(); notify('Таблицю імпортовано.'); }
+  try { await action('import', { csv, filename: csvName, nameColumn: Number($('name-column').value), descriptionColumn: Number($('description-column').value) }); chosen = undefined; dirty = false; rangeDirty = false; render(); $('import-dialog').close(); notify('Таблицю імпортовано.'); }
   catch (error) { notify(error.message); }
 });
 let refreshing = false;

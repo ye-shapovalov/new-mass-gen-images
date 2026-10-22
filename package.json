@@ -1,7 +1,7 @@
 {
   "name": "new-mass-gen",
-  "version": "1.1.0",
-  "description": "Локальна Windows-студія для пакетної генерації освітніх ілюстрацій через Gemini.",
+  "version": "1.3.1",
+  "description": "Локальна Windows-студія для пакетної генерації зображень із CSV через Gemini.",
   "author": "New Mass Gen Contributors",
   "private": true,
   "type": "module",

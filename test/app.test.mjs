@@ -9,12 +9,12 @@ import { imageToolsReady } from '../gemini-page.mjs';
 import { createStudio, listen, ROOT } from '../server.mjs';
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
-const CSV = 'Поняття,Опис\nДрон,Літає\nБатарея,Живить\nКамера,Знімає\n';
+const CSV = 'Назва,Опис\nЯблуко,Червоне\nГруша,Зелена\nАпельсин,Помаранчевий\n';
 async function fixture(generate = async () => PNG, options = {}) {
   const { requestDelaySeconds = 0, ...dependencies } = options;
   const root = await fs.mkdtemp(path.join(ROOT, '.test-'));
   await fs.writeFile(path.join(root, 'input.csv'), CSV);
-  await fs.writeFile(path.join(root, 'scenes.json'), JSON.stringify({ Дрон: 'Квадрокоптер над платформою' }));
+  await fs.writeFile(path.join(root, 'scenes.json'), JSON.stringify({ Яблуко: 'Стигле яблуко на світлому фоні' }));
   const studio = await createStudio({ root, generate, login: async () => {}, checkSession: async () => {}, listProfiles: async () => [{ id: 'Default', name: 'Personal', account: '' }, { id: 'Profile 1', name: 'Work', account: 'user@example.org' }], ...dependencies });
   assert.equal((await studio.snapshot()).requestDelaySeconds, 30);
   await studio.action('settings', { style: DEFAULT_STYLE, range: '', requestDelaySeconds });
@@ -22,30 +22,72 @@ async function fixture(generate = async () => PNG, options = {}) {
 }
 
 test('CSV supports BOM, escaped quotes, embedded commas/newlines and semicolon tables', () => {
-  const table = parseCSV('\uFEFFНазва,Опис\r\n"Дрон, БпА","Перша\nДруга ""цитата"""\r\n');
-  assert.deepEqual(table.rows, [['Дрон, БпА', 'Перша\nДруга "цитата"']]);
+  const table = parseCSV('\uFEFFНазва,Опис\r\n"Яблуко, червоне","Перша\nДруга ""цитата"""\r\n');
+  assert.deepEqual(table.rows, [['Яблуко, червоне', 'Перша\nДруга "цитата"']]);
   assert.deepEqual(parseCSV('a;b\r\n1;2').rows, [['1', '2']]);
-  assert.deepEqual(parseCSV('"Name, term";"Description, context"\nДрон;Літає').rows, [['Дрон', 'Літає']]);
+  assert.deepEqual(parseCSV('"Name, item";"Description, context"\nЯблуко;Червоне').rows, [['Яблуко', 'Червоне']]);
   for (const bad of ['', 'a,b', 'a,a\n1,2', 'a,b\n"1,2', 'a,b\n1,2,3', 'a,b\n"1"oops,2']) assert.throws(() => parseCSV(bad));
 });
 
-test('the supplied dataset maps all 141 definitions to matching scene ideas', async () => {
+test('the supplied dataset contains three replaceable fruit examples with scene ideas', async () => {
   const table = parseCSV(await fs.readFile(path.join(ROOT, 'input.csv'), 'utf8'));
   const scenes = JSON.parse(await fs.readFile(path.join(ROOT, 'scenes.json'), 'utf8'));
   const jobs = jobsFromCSV(table, 0, 1, scenes);
-  assert.equal(jobs.length, 141); assert.equal(table.headers.length, 15);
-  assert.equal(jobs[26].number, 27); assert.match(jobs[26].name, /Дрон-камікадзе/);
+  assert.equal(jobs.length, 3); assert.equal(table.headers.length, 2);
+  assert.deepEqual(jobs.map(job => job.name), ['Яблуко', 'Груша', 'Апельсин']);
   assert.ok(jobs.every(job => job.scene && buildPrompt(job, DEFAULT_STYLE).includes(job.description)));
-  assert.match(buildPrompt(jobs[0], DEFAULT_STYLE), /Без неону, тексту/);
+  assert.match(buildPrompt(jobs[0], DEFAULT_STYLE), /Use the active Create image tool now/);
+  assert.match(buildPrompt(jobs[0], DEFAULT_STYLE), /No neon, text/);
 });
 
 test('range and filename validation keeps the original numbering', () => {
-  assert.deepEqual([...selectedNumbers('1; 4; 7-9', 10)], [1, 4, 7, 8, 9]);
+  assert.deepEqual([...selectedNumbers('1-3', 10)], [1, 2, 3]);
+  assert.deepEqual([...selectedNumbers('1', 10)], [1]);
+  assert.deepEqual([...selectedNumbers('1,3,5,7-10', 10)], [1, 3, 5, 7, 8, 9, 10]);
   assert.equal(selectedNumbers('', 141).size, 141);
   for (const expression of ['0', '9-2', '1-142', '1;;3', '../']) assert.throws(() => selectedNumbers(expression, 141));
-  assert.equal(outputStem({ number: 3, name: 'Камера / відео: тест?' }), '3. Камера — відео — тест —');
+  assert.equal(outputStem({ number: 3, name: 'Апельсин / часточка: тест?' }), '3. Апельсин — часточка — тест —');
   assert.throws(() => imageType(Buffer.from('<html>error</html>')));
   assert.equal(imageType(PNG), '.png');
+});
+
+test('individual queue rows can be edited, held, resumed, regenerated and removed safely', async () => {
+  const f = await fixture();
+  try {
+    let state = await f.studio.action('job-hold', { number: 1 });
+    assert.equal(state.jobs[0].status, 'held'); assert.equal(state.queued, 2);
+    state = await f.studio.action('job-update', { number: 1, name: 'Зелене яблуко', description: 'Стиглий зелений плід', scene: 'Одне яблуко на столі' });
+    assert.equal(state.jobs[0].status, 'held'); assert.equal(state.jobs[0].name, 'Зелене яблуко');
+    state = await f.studio.action('job-resume', { number: 1 }); assert.equal(state.jobs[0].status, 'pending');
+    await f.studio.action('settings', { style: DEFAULT_STYLE, range: '1' });
+    await f.studio.action('start'); await f.studio.settled();
+    state = await f.studio.action('job-regenerate', { number: 1 }); assert.equal(state.jobs[0].status, 'pending');
+    const archived = await fs.readdir(path.join(f.root, 'output/images/_previous'));
+    assert.equal(archived.length, 1); assert.match(archived[0], /1\. Зелене яблуко\.png$/);
+    await f.studio.action('start'); await f.studio.settled();
+    const current = path.join(f.root, 'output/images/1. Зелене яблуко.png'); assert.deepEqual(await fs.readFile(current), PNG);
+    state = await f.studio.action('job-delete', { number: 1 });
+    assert.deepEqual(state.jobs.map(job => job.number), [2, 3]); assert.equal(state.range, '');
+    assert.deepEqual(await fs.readFile(current), PNG); assert.equal(await f.studio.image(1), null);
+  } finally { await f.clean(); }
+});
+
+test('applying a Word-style selection queues chosen rows, holds the rest and confirms regeneration explicitly', async () => {
+  const f = await fixture();
+  try {
+    let state = await f.studio.action('settings', { style: DEFAULT_STYLE, range: '1-2', applyRange: true, regenerateSelected: false });
+    assert.deepEqual(state.jobs.map(job => job.status), ['pending', 'pending', 'held']);
+    assert.equal(state.queued, 2);
+    await f.studio.action('start'); await f.studio.settled();
+    state = await f.studio.action('settings', { style: DEFAULT_STYLE, range: '2-3', applyRange: true, regenerateSelected: false });
+    assert.deepEqual(state.jobs.map(job => job.status), ['done', 'done', 'pending']);
+    assert.equal(state.queued, 1);
+    state = await f.studio.action('settings', { style: DEFAULT_STYLE, range: '2-3', applyRange: true, regenerateSelected: true });
+    assert.deepEqual(state.jobs.map(job => job.status), ['done', 'pending', 'pending']);
+    assert.equal(state.queued, 2);
+    const archived = await fs.readdir(path.join(f.root, 'output/images/_previous'));
+    assert.equal(archived.length, 1); assert.match(archived[0], /2\. Груша\.png$/);
+  } finally { await f.clean(); }
 });
 
 test('Oracle uses an isolated persistent manual-login profile without cookie sync', () => {
@@ -64,14 +106,14 @@ test('batch navigation waits for image tools as well as the composer', () => {
 });
 
 test('queue skips existing images and persists every generated result', async () => {
-  let count = 0; const f = await fixture(async ({ prompt }) => { assert.match(prompt, /Батарея|Камера/); count++; return PNG; });
+  let count = 0; const f = await fixture(async ({ prompt }) => { assert.match(prompt, /Груша|Апельсин/); count++; return PNG; });
   try {
-    await fs.writeFile(path.join(f.root, 'output/images/1. Дрон.png'), PNG);
+    await fs.writeFile(path.join(f.root, 'output/images/1. Яблуко.png'), PNG);
     await f.studio.action('start'); await f.studio.settled();
     const state = await f.studio.snapshot();
     assert.equal(count, 2); assert.equal(state.status, 'complete'); assert.equal(state.jobs[0].status, 'exists');
     assert.deepEqual(state.jobs.slice(1).map(job => job.status), ['done', 'done']);
-    assert.deepEqual(await fs.readFile(path.join(f.root, 'output/images/2. Батарея.png')), PNG);
+    assert.deepEqual(await fs.readFile(path.join(f.root, 'output/images/2. Груша.png')), PNG);
     assert.equal(JSON.parse(await fs.readFile(path.join(f.root, '.data/state.json'))).jobs[2].status, 'done');
     await assert.rejects(f.studio.action('start'), /немає незавершених/);
   } finally { await f.clean(); }
@@ -99,7 +141,7 @@ test('the selected folder alone determines progress, image serving and generatio
     await studio.action('settings', { style: DEFAULT_STYLE, range: '1' });
     await studio.action('start'); await studio.settled();
     const next = path.join(f.root, 'Нова папка з пробілами');
-    await fs.mkdir(next); await fs.writeFile(path.join(next, '2. Батарея.png'), PNG);
+    await fs.mkdir(next); await fs.writeFile(path.join(next, '2. Груша.png'), PNG);
     await studio.action('settings', { style: DEFAULT_STYLE, range: '', outputDir: next });
     let state = await studio.snapshot();
     assert.equal(state.outputDir, next);
@@ -108,11 +150,11 @@ test('the selected folder alone determines progress, image serving and generatio
     assert.equal(state.batch, undefined); assert.equal(state.status, 'idle');
     assert.equal(state.events.length, 1);
     assert.equal(await studio.image(1), null);
-    assert.deepEqual(await fs.readdir(original), ['1. Дрон.png']);
+    assert.deepEqual(await fs.readdir(original), ['1. Яблуко.png']);
     await studio.action('start'); await studio.settled();
     assert.equal(requests, 3);
-    assert.deepEqual(await fs.readFile(path.join(next, '1. Дрон.png')), PNG);
-    assert.deepEqual(await fs.readFile(path.join(next, '3. Камера.png')), PNG);
+    assert.deepEqual(await fs.readFile(path.join(next, '1. Яблуко.png')), PNG);
+    assert.deepEqual(await fs.readFile(path.join(next, '3. Апельсин.png')), PNG);
     await studio.close(); studio = null;
     studio = await createStudio({ root: f.root, generate: async () => PNG });
     state = await studio.snapshot(); assert.equal(state.outputDir, next);
@@ -122,7 +164,7 @@ test('the selected folder alone determines progress, image serving and generatio
     await studio.action('settings', { style: DEFAULT_STYLE, range: '', outputDir: original });
     assert.deepEqual((await studio.snapshot()).jobs.map(job => job.status), ['exists', 'pending', 'pending']);
     assert.equal(await studio.image(2), null);
-    await fs.unlink(path.join(original, '1. Дрон.png'));
+    await fs.unlink(path.join(original, '1. Яблуко.png'));
     await studio.action('settings', { style: DEFAULT_STYLE, range: '', outputDir: original });
     assert.deepEqual((await studio.snapshot()).jobs.map(job => job.status), ['pending', 'pending', 'pending']);
     assert.equal(await studio.image(1), null);
@@ -155,7 +197,7 @@ test('older progress uses the default image folder and scans its existing images
   const stateFile = path.join(f.root, '.data/state.json'); const state = JSON.parse(await fs.readFile(stateFile));
   delete state.outputDir;
   await fs.writeFile(stateFile, JSON.stringify(state));
-  await fs.writeFile(path.join(f.root, 'output/images/1. Дрон.png'), PNG);
+  await fs.writeFile(path.join(f.root, 'output/images/1. Яблуко.png'), PNG);
   const again = await createStudio({ root: f.root, generate: async () => PNG });
   try {
     const restored = await again.snapshot();
@@ -175,14 +217,14 @@ test('save-ready writes every ready image directly to the target folder, skips e
     const original = (await f.studio.snapshot()).outputDir;
     const target = path.join(f.root, 'Усі готові картинки'); await fs.mkdir(target);
     const existing = Buffer.concat([PNG, Buffer.from('existing')]);
-    await fs.writeFile(path.join(target, '2. Батарея.jpg'), existing);
+    await fs.writeFile(path.join(target, '2. Груша.jpg'), existing);
     const result = await f.studio.action('save-ready', { style: DEFAULT_STYLE, range: '1', outputDir: target });
     assert.deepEqual(result.savedReady, { copied: 2, skipped: 1, failed: [] });
     assert.equal(result.outputDir, target); assert.equal(calls, 3);
     assert.deepEqual(result.jobs.map(job => job.status), ['exists', 'exists', 'exists']);
-    assert.deepEqual((await fs.readdir(target)).sort(), ['1. Дрон.png', '2. Батарея.jpg', '3. Камера.png'].sort());
-    assert.deepEqual(await fs.readFile(path.join(target, '1. Дрон.png')), PNG);
-    assert.deepEqual(await fs.readFile(path.join(target, '2. Батарея.jpg')), existing);
+    assert.deepEqual((await fs.readdir(target)).sort(), ['1. Яблуко.png', '2. Груша.jpg', '3. Апельсин.png'].sort());
+    assert.deepEqual(await fs.readFile(path.join(target, '1. Яблуко.png')), PNG);
+    assert.deepEqual(await fs.readFile(path.join(target, '2. Груша.jpg')), existing);
     assert.equal((await fs.readdir(original)).length, 3);
     const again = await f.studio.action('save-ready', { style: DEFAULT_STYLE, range: '', outputDir: target });
     assert.deepEqual(again.savedReady, { copied: 0, skipped: 3, failed: [] }); assert.equal(calls, 3);
@@ -194,16 +236,16 @@ test('save-ready reports deleted originals and invalid destination conflicts whi
   try {
     await f.studio.action('start'); await f.studio.settled();
     const original = (await f.studio.snapshot()).outputDir;
-    await fs.unlink(path.join(original, '1. Дрон.png'));
+    await fs.unlink(path.join(original, '1. Яблуко.png'));
     const target = path.join(f.root, 'destination'); await fs.mkdir(target);
-    await fs.writeFile(path.join(target, '3. Камера.png'), 'keep this file');
+    await fs.writeFile(path.join(target, '3. Апельсин.png'), 'keep this file');
     const result = await f.studio.action('save-ready', { style: DEFAULT_STYLE, range: '', outputDir: target });
     assert.equal(result.savedReady.copied, 1); assert.equal(result.savedReady.skipped, 0);
     assert.deepEqual(result.savedReady.failed.map(job => job.number), [1, 3]);
     assert.match(result.savedReady.failed[0].message, /Оригінальний файл відсутній/);
     assert.match(result.savedReady.failed[1].message, /не перезаписано/);
-    assert.equal(await fs.readFile(path.join(target, '3. Камера.png'), 'utf8'), 'keep this file');
-    assert.deepEqual(await fs.readFile(path.join(target, '2. Батарея.png')), PNG);
+    assert.equal(await fs.readFile(path.join(target, '3. Апельсин.png'), 'utf8'), 'keep this file');
+    assert.deepEqual(await fs.readFile(path.join(target, '2. Груша.png')), PNG);
     assert.deepEqual(result.jobs.map(job => job.status), ['pending', 'exists', 'pending']);
     assert.equal(calls, 3);
   } finally { await f.clean(); }
@@ -349,13 +391,33 @@ test('a capability refusal retries the same term once, then continues the batch'
   } finally { await f.clean(); }
 });
 
-test('two capability failures leave that row for review and continue the batch', async () => {
+test('two capability failures disable the account and pause instead of wasting the rest of the batch', async () => {
   let calls = 0; const f = await fixture(async () => { if (++calls <= 2) throw Object.assign(new Error('No image function'), { kind: 'capability' }); return PNG; });
   try {
     await f.studio.action('start'); await f.studio.settled(); const state = await f.studio.snapshot();
-    assert.equal(calls, 4); assert.equal(state.status, 'complete'); assert.equal(state.jobs[0].attempts, 2);
-    assert.deepEqual(state.jobs.map(job => job.status), ['error', 'done', 'done']);
-    assert.equal(state.batchDone, 2); assert.equal(state.batchFailed, 1);
+    assert.equal(calls, 2); assert.equal(state.status, 'paused'); assert.equal(state.reason, 'capability'); assert.equal(state.jobs[0].attempts, 2);
+    assert.deepEqual(state.jobs.map(job => job.status), ['error', 'pending', 'pending']);
+    assert.equal(state.batchDone, 0); assert.equal(state.batchFailed, 1);
+    assert.equal(state.geminiAccounts.dedicated[0].enabled, false); assert.ok(state.geminiAccounts.dedicated[0].capabilityAt);
+    await f.studio.action('account-update', { id: 'main', enabled: true });
+    const restored = await f.studio.snapshot(); assert.equal(restored.reason, undefined); assert.equal(restored.jobs[0].status, 'pending');
+  } finally { await f.clean(); }
+});
+
+test('an account without image generation hands the same row to the next enabled account', async () => {
+  let calls = 0; const profiles = []; const f = await fixture(async ({ profile }) => {
+    profiles.push(profile);
+    if (++calls <= 2) throw Object.assign(new Error('No image function'), { kind: 'capability' });
+    return PNG;
+  });
+  try {
+    await f.studio.action('account-add', { name: 'Резервний', url: 'https://gemini.google.com/app' });
+    const reserve = (await f.studio.snapshot()).geminiAccounts.dedicated[1];
+    await f.studio.action('start'); await f.studio.settled(); const state = await f.studio.snapshot();
+    assert.equal(calls, 5); assert.ok(profiles.slice(0, 2).every(profile => profile === path.join(f.root, '.data/browser-profile')));
+    assert.ok(profiles.slice(2).every(profile => profile === path.join(f.root, '.data/account-profiles', reserve.id)));
+    assert.equal(state.geminiAccounts.dedicated[0].enabled, false); assert.ok(state.geminiAccounts.dedicated[0].capabilityAt);
+    assert.ok(state.jobs.every(job => job.status === 'done' && job.geminiAccount.name === 'Резервний'));
   } finally { await f.clean(); }
 });
 
@@ -630,8 +692,8 @@ test('CSV reimport retains scene descriptions for known terms', async () => {
   try {
     await f.studio.action('import', { csv: CSV, nameColumn: 0, descriptionColumn: 1 });
     const job = (await f.studio.snapshot()).jobs[0];
-    assert.equal(job.scene, 'Квадрокоптер над платформою');
-    assert.match(buildPrompt(job, DEFAULT_STYLE), /Сцена: Квадрокоптер над платформою/);
+    assert.equal(job.scene, 'Стигле яблуко на світлому фоні');
+    assert.match(buildPrompt(job, DEFAULT_STYLE), /Scene: Стигле яблуко на світлому фоні/);
   } finally { await f.clean(); }
 });
 
@@ -644,7 +706,7 @@ test('startup restores scenes dropped by older imports without resetting job sta
   const again = await createStudio({ root: f.root, generate: async () => PNG });
   try {
     const restored = (await again.snapshot()).jobs[0];
-    assert.equal(restored.scene, 'Квадрокоптер над платформою'); assert.equal(restored.status, 'error');
+    assert.equal(restored.scene, 'Стигле яблуко на світлому фоні'); assert.equal(restored.status, 'error');
     assert.equal(restored.error, 'Previous response');
     const backups = (await fs.readdir(path.join(f.root, '.data'))).filter(name => name.startsWith('backup-scenes-'));
     assert.equal(backups.length, 1);
@@ -655,11 +717,11 @@ test('startup restores scenes dropped by older imports without resetting job sta
 });
 
 test('a file created during generation is never overwritten', async () => {
-  let f; f = await fixture(async () => { await fs.writeFile(path.join(f.root, 'output/images/1. Дрон.png'), PNG); return PNG; });
+  let f; f = await fixture(async () => { await fs.writeFile(path.join(f.root, 'output/images/1. Яблуко.png'), PNG); return PNG; });
   try {
     await f.studio.action('start'); await f.studio.settled();
     assert.equal((await f.studio.snapshot()).jobs[0].status, 'error');
-    assert.deepEqual(await fs.readFile(path.join(f.root, 'output/images/1. Дрон.png')), PNG);
+    assert.deepEqual(await fs.readFile(path.join(f.root, 'output/images/1. Яблуко.png')), PNG);
     await f.studio.action('scan'); assert.equal((await f.studio.snapshot()).jobs[0].status, 'exists');
   } finally { await f.clean(); }
 });
@@ -705,7 +767,7 @@ test('local HTTP imports, generates, downloads and rejects foreign-site mutation
     assert.equal((await post('start', {})).status, 200); await f.studio.settled();
     const image = await get('/images/2'); assert.equal(image.headers.get('content-type'), 'image/png');
     assert.deepEqual(Buffer.from(await image.arrayBuffer()), PNG);
-    const report = await (await get('/api/report')).json(); assert.equal(report.jobs[1].status, 'done'); assert.ok(report.jobs[1].prompt.includes('Батарея'));
+    const report = await (await get('/api/report')).json(); assert.equal(report.jobs[1].status, 'done'); assert.ok(report.jobs[1].prompt.includes('Груша'));
     assert.equal(report.root, undefined); assert.equal(report.outputDir, undefined); assert.equal(report.geminiAccounts, undefined); assert.equal(report.jobs[1].geminiAccount, undefined);
     const saved = await (await post('save-ready', { style: DEFAULT_STYLE, range: '', outputDir: path.join(f.root, 'saved-ready') })).json();
     assert.deepEqual(saved.savedReady, { copied: 1, skipped: 0, failed: [] });

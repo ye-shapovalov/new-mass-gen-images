@@ -2,17 +2,17 @@
 <html lang="uk">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>New Mass Gen · Ілюстрації понять</title>
+  <title>New Mass Gen · Пакетна генерація зображень</title>
   <link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script>
 </head>
 <body>
   <aside class="sidebar" id="settings">
     <a class="brand" href="/" aria-label="New Mass Gen"><span class="brand-icon">✳</span><span>MASS GEN<small>СТУДІЯ ІЛЮСТРАЦІЙ</small></span></a>
     <div class="project-label">ПОТОЧНИЙ ПРОЄКТ</div>
-    <div class="project"><span>◈</span><div>Поняття про дрони<small id="source-label">Завантаження…</small></div></div>
+    <div class="project"><span>◈</span><div>Нова серія зображень<small id="source-label">Завантаження…</small></div></div>
     <section class="side-section">
       <div class="section-title"><span>01</span><h2>Джерело</h2></div>
-      <p>Одне поняття з таблиці — одна окрема ілюстрація.</p>
+      <p>Один рядок таблиці — одне окреме зображення.</p>
       <button id="import-button" class="secondary full">＋ Імпортувати CSV</button>
       <input id="csv-file" type="file" accept=".csv,text/csv" hidden>
     </section>
@@ -20,26 +20,27 @@
       <div class="section-title"><span>02</span><h2>Основний стиль запиту</h2></div>
       <label class="field-label" for="style">Текст стилю для всіх зображень</label>
       <textarea id="style" rows="8" maxlength="12000" aria-describedby="style-hint" placeholder="Опишіть композицію, палітру, освітлення та обмеження для всієї серії"></textarea>
-      <small class="hint" id="style-hint">Цей текст можна повністю змінити. Він додається до кожного нового запиту після натискання «Зберегти налаштування». Натисніть на поняття у списку, щоб переглянути повний запит.</small>
+      <small class="hint" id="style-hint">Цей текст можна повністю змінити. Він додається до кожного нового запиту після натискання «Зберегти налаштування». Натисніть на рядок у списку, щоб переглянути повний запит.</small>
+      <small class="hint"><strong>Порада:</strong> Gemini надійніше розпізнає запит на картинку англійською. Базова команда вже англійська; для складних випадків також напишіть назву, опис і стиль англійською та чітко опишіть один об’єкт або одну сцену.</small>
       <label class="field-label" for="batch-size">Зображень у пакеті</label>
       <select id="batch-size"><option value="10">10 зображень</option><option value="25" selected>25 зображень</option><option value="50">50 зображень</option><option value="100">100 зображень</option><option value="0">Усі незавершені</option></select>
       <small class="hint">Один запуск — увесь пакет автоматично.</small>
       <label class="field-label" for="request-delay">Затримка між запитами, секунд</label>
       <input id="request-delay" type="number" min="0" max="3600" step="1" value="30" aria-describedby="request-delay-hint">
       <small class="hint" id="request-delay-hint">За замовчуванням 30 секунд після кожної спроби, включно з повторами та зміною акаунта. 0 — без затримки.</small>
-      <label class="field-label" for="range">Номери для генерації</label>
-      <input id="range" placeholder="Усі незавершені · або 27-141">
-      <small class="hint">Можна вказати 1; 4; 27-141. Готові пропускаються.</small>
+      <label class="field-label" for="range">Які зображення генерувати</label>
+      <input id="range" maxlength="5000" spellcheck="false" aria-describedby="range-hint" placeholder="Наприклад: 1,3,5,7-10">
+      <small class="hint" id="range-hint">Як у друці Word: 1-3, окремо 1 або вибірково 1,3,5,7-10. Вибрані незавершені рядки стануть у чергу, решта буде призупинена.</small>
       <button id="save-settings" class="secondary full">Зберегти налаштування</button>
     </section>
     <section class="side-section" id="output-settings">
       <div class="section-title"><span>03</span><h2>Папка зображень</h2></div>
       <label class="field-label" for="output-folder">Папка для збереження та перевірки картинок</label>
       <div class="folder-picker">
-        <input id="output-folder" type="text" spellcheck="false" placeholder="C:\Pictures\Drones" aria-describedby="output-folder-hint">
+        <input id="output-folder" type="text" spellcheck="false" placeholder="C:\Pictures\New Mass Gen" aria-describedby="output-folder-hint">
         <button id="choose-output-folder" class="secondary" type="button" hidden>Обрати…</button>
       </div>
-      <small class="hint" id="output-folder-hint">Вставте повний шлях та збережіть. Знайдені тут картинки позначаться готовими, решта понять — у черзі. Файли зіставляються за номером і назвою поняття. Прогрес та історія старої папки не переносяться. Нову папку буде створено автоматично.</small>
+      <small class="hint" id="output-folder-hint">Вставте повний шлях та збережіть. Знайдені тут картинки позначаться готовими, решта рядків — у черзі. Файли зіставляються за номером і назвою. Прогрес та історія старої папки не переносяться. Нову папку буде створено автоматично.</small>
       <button id="save-output-folder" class="secondary full">Зберегти папку</button>
       <button id="save-ready" class="secondary full">↓ Зберегти всі готові картинки</button>
       <small class="hint">Нові картинки записуються сюди автоматично. Щоб перенести сюди всі поточні готові, вкажіть шлях і натисніть «Зберегти всі готові картинки». Наявні пропускаються; генерація не запускається.</small>
@@ -66,7 +67,7 @@
           Повторіть для інших акаунтів один раз. Входи зберігаються між запусками. Під час пакета перемикання відбувається без вікон; повторний вхід потрібен лише якщо Google завершить сесію.
         </div>
         <small class="hint" id="account-url-hint" hidden>Посилання /u/2/, /u/4/ потрібні лише в цьому видимому режимі: вони обирають уже залогінений Google-акаунт у вибраному профілі Chrome. Скопіюйте адресу саме з цього профілю. Саме посилання не виконує вхід.</small>
-        <small class="hint">Генеруємо на першому увімкненому акаунті. При ліміті він вимикається, а поточне поняття переходить до наступного. Після відновлення ліміту акаунт можна увімкнути знову. Порядок змінюється стрілками ↑ ↓; зміни зберігаються одразу.</small>
+        <small class="hint">Генеруємо на першому увімкненому акаунті. При ліміті він вимикається, а поточний рядок переходить до наступного. Після відновлення ліміту акаунт можна увімкнути знову. Порядок змінюється стрілками ↑ ↓; зміни зберігаються одразу.</small>
         <div id="gemini-accounts"></div>
         <label class="field-label" for="account-name">Назва нового акаунта</label>
         <input id="account-name" maxlength="100" placeholder="Наприклад, Основний акаунт">
@@ -94,11 +95,11 @@
     <div class="side-footer"><span class="green-dot"></span> Локально на вашому комп’ютері<small>Послідовна генерація · прогрес зберігається</small></div>
   </aside>
   <main>
-    <header class="topbar"><span>РОБОЧИЙ ПРОСТІР <b>/</b> ОСВІТНЯ СЕРІЯ</span><a class="mobile-settings" href="#settings">Налаштування ↓</a><span class="local-badge">● LOCAL STUDIO</span></header>
+    <header class="topbar"><span>РОБОЧИЙ ПРОСТІР <b>/</b> СЕРІЯ ЗОБРАЖЕНЬ</span><a class="mobile-settings" href="#settings">Налаштування ↓</a><span class="local-badge">● LOCAL STUDIO</span></header>
     <div class="main-content">
-      <div class="heading"><div><div class="eyebrow">ВІД ПОНЯТТЯ ДО ЗОБРАЖЕННЯ</div><h1>Ілюстрації про дрони<span>.</span></h1><p>Одна таблиця. Єдиний стиль. Уся серія під контролем.</p></div><a href="/api/report" class="outline download" download>↓ Звіт про прогрес</a></div>
+      <div class="heading"><div><div class="eyebrow">ВІД ТАБЛИЦІ ДО ЗОБРАЖЕНЬ</div><h1>Пакетна генерація<span>.</span></h1><p>Одна таблиця. Єдиний стиль. Уся серія під контролем.</p></div><a href="/api/report" class="outline download" download>↓ Звіт про прогрес</a></div>
       <section class="metrics" aria-label="Прогрес генерації">
-        <div><span>ПОНЯТЬ У СЕРІЇ</span><strong id="total">—</strong><small>рядків із вашої таблиці</small></div>
+        <div><span>РЯДКІВ У СЕРІЇ</span><strong id="total">—</strong><small>із вашої таблиці</small></div>
         <div><span>ІЛЮСТРАЦІЙ ГОТОВО</span><strong id="done">—</strong><small>збережено у папці</small></div>
         <div><span>У ВИБРАНІЙ ЧЕРЗІ</span><strong id="pending">—</strong><small>очікують генерації</small></div>
         <div class="progress-metric"><span>ГОТОВНІСТЬ СЕРІЇ</span><strong id="percent">—</strong><progress id="progress" max="100" value="0"></progress></div>
@@ -106,17 +107,18 @@
       <section class="runbar"><div class="run-status"><span id="status-dot" class="status-dot"></span><div><strong id="run-label">Завантаження студії…</strong><small id="run-detail">Читаємо збережений прогрес</small></div></div><div class="run-actions"><button id="scan" class="outline">↻ Перевірити файли</button><button id="stop" class="outline" disabled>■ Зупинити зараз</button><button id="pause" class="outline" disabled>Ⅱ Пауза</button><button id="start" class="primary">▶ Генерувати пакет</button></div></section>
       <section class="workspace">
         <div class="queue-panel">
-          <div class="panel-heading"><h2>Поняття серії <span id="visible-count"></span></h2><div class="view-toggle" aria-label="Вигляд"><button id="list-view" class="active" aria-pressed="true">☰ Список</button><button id="grid-view" aria-pressed="false">▦ Галерея</button></div></div>
-          <div class="filters"><div class="filter-tabs" role="group" aria-label="Фільтр статусу"><button data-filter="all" class="active">Усі</button><button data-filter="pending">У черзі</button><button data-filter="done">Готові</button><button data-filter="error">Помилки</button></div><label class="search"><span>⌕</span><input id="search" placeholder="Знайти поняття…" aria-label="Пошук понять"></label></div>
-          <div id="jobs" class="jobs" aria-label="Поняття"></div>
+          <div class="panel-heading"><h2>Рядки серії <span id="visible-count"></span></h2><div class="view-toggle" aria-label="Вигляд"><button id="list-view" class="active" aria-pressed="true">☰ Список</button><button id="grid-view" aria-pressed="false">▦ Галерея</button></div></div>
+          <div class="filters"><div class="filter-tabs" role="group" aria-label="Фільтр статусу"><button data-filter="all" class="active">Усі</button><button data-filter="pending">У черзі</button><button data-filter="done">Готові</button><button data-filter="error">Помилки</button></div><label class="search"><span>⌕</span><input id="search" placeholder="Знайти рядок…" aria-label="Пошук рядків"></label></div>
+          <div id="jobs" class="jobs" aria-label="Рядки таблиці"></div>
         </div>
-        <aside class="detail-panel" id="detail" aria-label="Перегляд поняття"></aside>
+        <aside class="detail-panel" id="detail" aria-label="Перегляд рядка"></aside>
       </section>
       <section class="activity"><div><h2>Останні події</h2><span>Прогрес зберігається після кожного зображення</span></div><ol id="events"></ol></section>
       <footer class="output"><span>↳ Папка зображень:</span><code id="output-dir"></code><button id="copy-path" class="text-button">Копіювати шлях</button><a href="#output-settings">Змінити папку</a></footer>
     </div>
   </main>
   <div id="notice" role="status" aria-live="polite" hidden></div>
-  <dialog id="import-dialog"><form id="import-form"><div class="dialog-heading"><h2>Імпорт таблиці</h2><button type="button" id="close-import" aria-label="Закрити">×</button></div><p id="import-summary"></p><label for="name-column">Колонка назви поняття</label><select id="name-column"></select><label for="description-column">Колонка опису</label><select id="description-column"></select><p class="import-note">Попередній прогрес буде збережено у резервному файлі. Готові зображення залишаються в папці; збіги за номером і назвою пропускаються.</p><button type="submit" class="primary full">Імпортувати поняття</button></form></dialog>
+  <dialog id="regenerate-dialog"><form method="dialog"><div class="dialog-heading"><h2>Перегенерувати готові зображення?</h2></div><p>Серед вибраних рядків уже мають зображення: <strong id="regenerate-count">0</strong>.</p><p class="import-note">Під час перегенерації попередні файли буде переміщено до папки <code>_previous</code>.</p><div class="dialog-actions"><button value="keep" class="secondary">Залишити готові</button><button value="regenerate" class="primary">Перегенерувати</button></div></form></dialog>
+  <dialog id="import-dialog"><form id="import-form"><div class="dialog-heading"><h2>Імпорт таблиці</h2><button type="button" id="close-import" aria-label="Закрити">×</button></div><p id="import-summary"></p><label for="name-column">Колонка назви</label><select id="name-column"></select><label for="description-column">Колонка опису</label><select id="description-column"></select><p class="import-note">Попередній прогрес буде збережено у резервному файлі. Готові зображення залишаються в папці; збіги за номером і назвою пропускаються.</p><button type="submit" class="primary full">Імпортувати рядки</button></form></dialog>
 </body>
 </html>
