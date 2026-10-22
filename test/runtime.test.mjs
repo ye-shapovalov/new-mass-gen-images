@@ -6,7 +6,7 @@ import { ROOT } from '../server.mjs';
 import { ensureSessionToken, migrateLegacyData, runtimeDataDirectory } from '../runtime.mjs';
 
 test('runtime data is placed in the current Windows profile without exposing a setup step', () => {
-  assert.equal(runtimeDataDirectory({ platform: 'win32', env: { LOCALAPPDATA: 'C:\\Profiles\\Sample\\AppData\\Local' } }), 'C:\\Profiles\\Sample\\AppData\\Local\\NewMassGen');
+  assert.equal(runtimeDataDirectory({ platform: 'win32', env: { LOCALAPPDATA: 'C:\\Profiles\\Sample\\AppData\\Local' } }), path.join('C:\\Profiles\\Sample\\AppData\\Local', 'NewMassGen'));
   assert.equal(runtimeDataDirectory({ platform: 'linux', env: { XDG_DATA_HOME: '/tmp/data' }, home: '/var/lib/sample' }), path.join('/tmp/data', 'new-mass-gen'));
 });
 
