@@ -48,6 +48,8 @@ test('the reported Ukrainian text-only refusal is recognized immediately', () =>
   assert.equal(isTextOnlyRefusal({ text: 'Creating your image…', busy: true }), false);
   assert.equal(isTextOnlyRefusal({ text: 'Я не маю потрібних функцій для таких завдань.', busy: false }), true);
   assert.equal(isCapabilityRefusal('Я не маю потрібних функцій для таких завдань.'), true);
+  assert.equal(isTextOnlyRefusal({ text: 'Я не понимаю вас и не могу ответить. Я просто языковая модель, и таких возможностей у меня нет.', busy: false }), true);
+  assert.equal(isCapabilityRefusal('Я просто языковая модель, и таких возможностей у меня нет.'), true);
   assert.equal(isCapabilityRefusal('I cannot generate that prohibited content.'), false);
 });
 
@@ -83,8 +85,8 @@ function fakeClient(imageMode, response = '') {
 
 test('the driver stops on a text-only refusal without resending the prompt', async () => {
   const f = fakeClient(true, 'Я лише мовна модель.'); const logs = [];
-  await assert.rejects(generateInPage(f.client, 'Намалюй мікродрон', { log: text => logs.push(text) }), /текст замість зображення/);
-  assert.deepEqual(f.sent, ['Намалюй мікродрон']);
+  await assert.rejects(generateInPage(f.client, 'Намалюй яблуко', { log: text => logs.push(text) }), /текст замість зображення/);
+  assert.deepEqual(f.sent, ['Намалюй яблуко']);
   assert.ok(logs.some(text => text.includes('Gemini text response: Я лише мовна модель.')));
 });
 
@@ -112,7 +114,7 @@ test('the real daily quota response stops immediately without waiting for the im
 
 test('the driver never sends a prompt when image-mode selection cannot be verified', async () => {
   const f = fakeClient(false); const logs = [];
-  await assert.rejects(generateInPage(f.client, 'Намалюй мікродрон', { log: text => logs.push(text) }), /не підтвердив активний режим/);
+  await assert.rejects(generateInPage(f.client, 'Намалюй яблуко', { log: text => logs.push(text) }), /не підтвердив активний режим/);
   assert.deepEqual(f.sent, []);
   assert.equal(logs.some(text => text.includes('Підтверджено активний режим')), false);
 });
