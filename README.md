@@ -2,6 +2,13 @@
 
 Локальна Windows-платформа для пакетної генерації зображень із таблиці через вебінтерфейс Gemini Create image. Oracle 0.21.6 керує окремими сесіями Chrome, а готові PNG/JPEG/WebP автоматично зберігаються у вибрану папку.
 
+## Завантажити для Windows
+
+- [New Mass Gen 1.3.1 — інсталятор](https://github.com/ye-shapovalov/new-mass-gen-images/releases/download/v1.3.1/New-Mass-Gen-Setup-1.3.1.exe) — рекомендований варіант.
+- [New Mass Gen 1.3.1 — portable](https://github.com/ye-shapovalov/new-mass-gen-images/releases/download/v1.3.1/New-Mass-Gen-Portable-1.3.1.exe) — запуск без встановлення.
+
+[Сторінка останнього релізу](https://github.com/ye-shapovalov/new-mass-gen-images/releases/latest) містить опис версії та всі доступні файли.
+
 ## Electron-версія для Windows
 
 Electron-версія працює як звичайна програма Windows: локальний сервер запускається автоматично, інтерфейс відкривається в окремому вікні, а папку зображень можна обрати через системне вікно. Після закриття основного вікна програма залишається в системному треї, щоб активний пакет не переривався. Для повного завершення оберіть **«Вийти»** в меню значка New Mass Gen біля годинника.
