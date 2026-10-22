@@ -2,17 +2,18 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { ensureSessionToken, runtimeDataDirectory } from './runtime.mjs';
+import { ensureSessionToken, runtimeDataDirectory, ensureInstallationId } from './runtime.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT || 4188); const url = `http://127.0.0.1:${port}/`;
 const token = await ensureSessionToken(runtimeDataDirectory());
+const instanceId = await ensureInstallationId(runtimeDataDirectory());
 const cookie = `new_mass_gen_session=${token}`;
 const ready = async () => {
   try {
     const response = await fetch(`${url}api/health`, { headers: { cookie }, signal: AbortSignal.timeout(1000) });
     const health = await response.json();
-    if (health.app !== 'new-mass-gen' || health.root !== root) throw new Error(`Порт ${port} використовує інша програма. Задайте PORT.`);
+    if (health.app !== 'new-mass-gen' || health.instanceId !== instanceId) throw new Error(`Порт ${port} використовує інша програма. Задайте PORT.`);
     return true;
   } catch (error) { if (error.message.includes('використовує')) throw error; return false; }
 };

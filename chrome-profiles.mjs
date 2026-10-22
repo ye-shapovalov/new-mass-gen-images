@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { bounded } from './timing.mjs';
+import { maskEmail } from './privacy.mjs';
 const ownedTabs = new Map();
 
 export function ownedProfileTab(targets, saved, endpoint) {
@@ -23,7 +24,8 @@ export async function listChromeProfiles(userDataDir = chromeUserDataDir()) {
   try { state = JSON.parse(await fs.readFile(path.join(userDataDir, 'Local State'), 'utf8')); }
   catch (error) { if (['ENOENT', 'EACCES', 'EPERM'].includes(error.code)) return []; throw error; }
   return Object.entries(state.profile?.info_cache || {}).filter(([id, profile]) => validProfile(id) && profile && typeof profile === 'object')
-    .map(([id, profile]) => ({ id, name: String(profile.name || id), account: String(profile.user_name || '') }));
+    // Only the label and a masked address leave the Chrome profile; no credential is read.
+    .map(([id, profile]) => ({ id, name: String(profile.name || id), account: maskEmail(profile.user_name) }));
 }
 
 export function existingChromeArguments(id, url) {

@@ -15,8 +15,8 @@ test('existing profile choices read only Chrome profile labels and reject direct
       '../Other': { name: 'invalid' }, 'Profile 2': null
     } }, os_crypt: { encrypted_key: 'never returned' } }));
     assert.deepEqual(await listChromeProfiles(root), [
-      { id: 'Default', name: 'Особистий', account: 'user@example.org' },
-      { id: 'Profile 1', name: 'Робочий', account: 'work@example.org' }
+      { id: 'Default', name: 'Особистий', account: 'u***@example.org' },
+      { id: 'Profile 1', name: 'Робочий', account: 'w***@example.org' }
     ]);
   } finally { assert.equal(path.dirname(root), ROOT); await fs.rm(root, { recursive: true, force: true }); }
 });

@@ -707,6 +707,10 @@ test('local HTTP imports, generates, downloads and rejects foreign-site mutation
     assert.deepEqual(Buffer.from(await image.arrayBuffer()), PNG);
     const report = await (await get('/api/report')).json(); assert.equal(report.jobs[1].status, 'done'); assert.ok(report.jobs[1].prompt.includes('Батарея'));
     assert.equal(report.root, undefined); assert.equal(report.outputDir, undefined); assert.equal(report.geminiAccounts, undefined); assert.equal(report.jobs[1].geminiAccount, undefined);
+    const health = await (await get('/api/health')).json();
+    assert.equal(health.root, undefined); assert.equal(health.instanceId, f.studio.instanceId);
+    const state = await (await get('/api/state')).json();
+    assert.equal(state.root, undefined); assert.equal(state.instanceId, f.studio.instanceId);
     const saved = await (await post('save-ready', { style: DEFAULT_STYLE, range: '', outputDir: path.join(f.root, 'saved-ready') })).json();
     assert.deepEqual(saved.savedReady, { copied: 1, skipped: 0, failed: [] });
     assert.deepEqual(Buffer.from(await (await get('/images/2')).arrayBuffer()), PNG);

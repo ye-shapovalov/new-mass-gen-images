@@ -2,6 +2,7 @@ node_modules/
 .npm-cache/
 .data/
 api-token
+installation-id
 output/
 *.log
 .test-*/

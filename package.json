@@ -9,6 +9,7 @@
     "open": "node launch.mjs",
     "test": "node --test test/*.test.mjs",
     "check:background": "node scripts/check-background.mjs",
+    "check:privacy": "node scripts/check-privacy.mjs",
     "oracle": "oracle"
   },
   "dependencies": { "@steipete/oracle": "0.21.6" }

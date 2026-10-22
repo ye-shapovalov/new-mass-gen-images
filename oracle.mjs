@@ -8,6 +8,7 @@ import { generateInPage, pageState } from './gemini-page.mjs';
 import { bounded } from './timing.mjs';
 import { openExistingChrome, openExistingChromeSession } from './chrome-profiles.mjs';
 import { DEFAULT_GEMINI_URL, normalizeGeminiURL } from './gemini-accounts.mjs';
+import { redactEmails, redactState } from './privacy.mjs';
 
 export function findChrome() {
   return [process.env.CHROME_PATH,
@@ -142,7 +143,7 @@ export async function generateWithGeminiBrowser({ root, profile, browserMode = '
   if (existing && background) throw Object.assign(new Error('Наявний профіль працює у звичайному Chrome. Вимкніть прихований режим.'), { kind: 'browser-setup' });
   if (background && !existing) await assertBackgroundChrome(profile);
   const handle = await fs.open(logPath, 'w'); let writes = Promise.resolve();
-  const log = message => { writes = writes.then(() => handle.write(`${new Date().toISOString()} ${message}\n`)); };
+  const log = message => { writes = writes.then(() => handle.write(`${new Date().toISOString()} ${redactEmails(message)}\n`)); };
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(Object.assign(new Error('Спроба перевищила 4 хвилини й зупинена.'), { kind: 'timeout' })), 240000);
   const attemptSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
@@ -175,7 +176,8 @@ export async function generateWithGeminiBrowser({ root, profile, browserMode = '
         const snapshot = await bounded(session.client.Runtime.evaluate({ expression: `(${pageState.toString()})()`, returnByValue: true }), 3000, 'Стан сторінки недоступний.');
         const state = snapshot.result?.value;
         if (state?.url?.startsWith('https://gemini.google.com/')) {
-          await fs.writeFile(path.join(path.dirname(logPath), 'page-state.json'), JSON.stringify(state, null, 2));
+          // The snapshot can repeat the signed-in address, so it is sanitised before it is written.
+          await fs.writeFile(path.join(path.dirname(logPath), 'page-state.json'), JSON.stringify(redactState(state), null, 2));
           const shot = await bounded(session.client.Page.captureScreenshot({ format: 'png', captureBeyondViewport: false }), 3000, 'Знімок сторінки недоступний.');
           await fs.writeFile(path.join(path.dirname(logPath), 'page.png'), Buffer.from(shot.data, 'base64'));
           log('Діагностика сторінки збережена: page-state.json, page.png.');

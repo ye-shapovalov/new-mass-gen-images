@@ -3,11 +3,21 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { ROOT } from '../server.mjs';
-import { ensureSessionToken, migrateLegacyData, runtimeDataDirectory } from '../runtime.mjs';
+import { ensureSessionToken, migrateLegacyData, runtimeDataDirectory, ensureInstallationId } from '../runtime.mjs';
 
 test('runtime data is placed in the current Windows profile without exposing a setup step', () => {
   assert.equal(runtimeDataDirectory({ platform: 'win32', env: { LOCALAPPDATA: 'C:\\Profiles\\Sample\\AppData\\Local' } }), 'C:\\Profiles\\Sample\\AppData\\Local\\NewMassGen');
   assert.equal(runtimeDataDirectory({ platform: 'linux', env: { XDG_DATA_HOME: '/tmp/data' }, home: '/var/lib/sample' }), path.join('/tmp/data', 'new-mass-gen'));
+});
+
+test('the installation id is random, stable and carries no path of the user', async () => {
+  const directory = await fs.mkdtemp(path.join(ROOT, '.test-runtime-id-'));
+  try {
+    const first = await ensureInstallationId(directory); const second = await ensureInstallationId(directory);
+    assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.equal(second, first);
+    assert.equal((await fs.readFile(path.join(directory, 'installation-id'), 'utf8')).trim(), first);
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
 
 test('the local API token is strong, private and stable between launches', async () => {

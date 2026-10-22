@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -60,5 +60,22 @@ export async function ensureSessionToken(dataDirectory) {
     const token = randomBytes(32).toString('base64url');
     try { await fs.writeFile(file, token, { flag: 'wx', mode: 0o600 }); return token; }
     catch (writeError) { if (writeError.code !== 'EEXIST') throw writeError; return ensureSessionToken(dataDirectory); }
+  }
+}
+
+// A stable, non-identifying id of this installation. It replaces the folder path in
+// local API responses, so the Windows user name never leaves the machine.
+export async function ensureInstallationId(dataDirectory) {
+  const file = path.join(dataDirectory, 'installation-id');
+  await fs.mkdir(dataDirectory, { recursive: true, mode: 0o700 });
+  try {
+    const id = (await fs.readFile(file, 'utf8')).trim();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new Error('Некоректний ідентифікатор встановлення. Видаліть installation-id і запустіть програму знову.');
+    return id;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    const id = randomUUID();
+    try { await fs.writeFile(file, id, { flag: 'wx', mode: 0o600 }); return id; }
+    catch (writeError) { if (writeError.code !== 'EEXIST') throw writeError; return ensureInstallationId(dataDirectory); }
   }
 }
