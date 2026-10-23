@@ -21,7 +21,7 @@ test('public release is a generic template with per-row queue controls', async (
     fs.readFile(new URL('../requirements.md', import.meta.url), 'utf8'),
     fs.readFile(new URL('../scenes.json', import.meta.url), 'utf8')
   ]);
-  const legacyTerms = new RegExp('\\u0434\\u0440\\u043e\\u043d|\\u0431\\u043f\\u043b\\u0430|\\bdrone\\b|\\buav\\b', 'i');
+  const legacyTerms = new RegExp('\\u0434\\u0440\\u043e\\u043d|\\u0431\\u043f\\u043b\\u0430|\\x64\\x72\\x6f\\x6e\\x65|\\x75\\x61\\x76', 'i');
   assert.doesNotMatch([html, app, csv, server, readme, requirements, scenes].join('\n'), legacyTerms);
   assert.match(csv, /Яблуко/); assert.match(csv, /Груша/); assert.match(csv, /Апельсин/);
   for (const command of ['job-update', 'job-hold', 'job-resume', 'job-regenerate', 'job-delete']) assert.match(app, new RegExp(command));
