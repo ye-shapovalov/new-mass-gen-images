@@ -82,19 +82,20 @@ function paletteSwatches(tone) {
   for (const color of tone?.colors || []) { const swatch = node('i'); swatch.style.backgroundColor = color; swatch.title = color; wrap.append(swatch); }
   return wrap;
 }
-function fillTemplateSelectors() {
-  const templates = state.templates || []; const selectedId = $('template-select').value || state.activeTemplateId || templates[0]?.id;
+function fillTemplateSelectors(preferredId, preferredTone) {
+  const templates = state.templates || []; const selectedId = preferredId || state.activeTemplateId || $('template-select').value || templates[0]?.id;
   $('template-select').replaceChildren(...templates.map(template => { const option = node('option', '', template.title); option.value = template.id; return option; }));
   $('template-select').value = templates.some(template => template.id === selectedId) ? selectedId : templates[0]?.id || '';
   const template = templates.find(item => item.id === $('template-select').value);
-  const selectedTone = $('tone-select').value || (template?.id === state.activeTemplateId ? state.activeToneId : '') || template?.tones?.[0]?.id;
+  const selectedTone = preferredTone || (template?.id === state.activeTemplateId ? state.activeToneId : '') || $('tone-select').value || template?.tones?.[0]?.id;
   $('tone-select').replaceChildren(...(template?.tones || []).map(tone => { const option = node('option', '', tone.title); option.value = tone.id; return option; }));
   $('tone-select').value = template?.tones?.some(tone => tone.id === selectedTone) ? selectedTone : template?.tones?.[0]?.id || '';
   const tone = template?.tones?.find(item => item.id === $('tone-select').value);
   $('tone-swatches').replaceChildren(...[...(tone?.colors || [])].map(color => { const swatch = node('i'); swatch.style.backgroundColor = color; swatch.title = color; return swatch; }));
   $('active-template-image').src = template?.imageUrl || '';
   $('active-template-image').hidden = !template;
-  $('use-template').disabled = active() || !template;
+  const activeStyle = state.activeStyle;
+  $('active-template-label').textContent = activeStyle?.type === 'template' ? `✓ Активний: ${activeStyle.templateTitle} · ${activeStyle.toneTitle}. Зміна списку застосовується одразу.` : 'Активний власний запит. Вибір шаблону або палітри застосовується одразу.';
 }
 function renderTemplateLibrary(force = false) {
   const key = JSON.stringify(state.templates || []); if (!force && key === templatesRenderingKey) return; templatesRenderingKey = key;
@@ -187,12 +188,24 @@ function renderJobs() {
   $('visible-count').textContent = jobs.length;
   $('jobs').classList.toggle('grid', grid); const fragment = document.createDocumentFragment();
   for (const job of jobs) {
-    const button = node('button', `job${job.number === chosen ? ' selected' : ''}${!job.selected ? ' outside' : ''}`);
-    button.setAttribute('aria-pressed', String(job.number === chosen)); button.append(node('span', 'job-number', String(job.number).padStart(3, '0')));
-    if (job.filename) { const img = node('img'); img.src = `/images/${job.number}`; img.alt = ''; img.loading = 'lazy'; button.append(img); }
-    else button.append(node('span', 'job-placeholder', '◇'));
+    const row = node('div', `job${job.number === chosen ? ' selected' : ''}${!job.selected ? ' outside' : ''}`);
+    row.setAttribute('role', 'button'); row.tabIndex = 0; row.setAttribute('aria-pressed', String(job.number === chosen)); row.append(node('span', 'job-number', String(job.number).padStart(3, '0')));
+    if (job.filename) { const img = node('img'); img.src = `/images/${job.number}`; img.alt = ''; img.loading = 'lazy'; row.append(img); }
+    else row.append(node('span', 'job-placeholder', '◇'));
     const text = node('span', 'job-text'); text.append(node('strong', '', job.name), node('small', '', job.description));
-    button.append(text, status(job)); button.addEventListener('click', () => { chosen = job.number; renderJobs(); renderDetail(); }); fragment.append(button);
+    row.append(text, status(job));
+    const quick = node('span', 'job-quick-actions');
+    const quickButton = (label, title, command, message) => {
+      const button = node('button', 'quick-action', label); button.type = 'button'; button.title = title; button.setAttribute('aria-label', `${title}: ${job.name}`); button.disabled = active();
+      button.addEventListener('click', event => { event.stopPropagation(); action(command, { number: job.number }).then(() => notify(message)).catch(error => notify(error.message)); }); quick.append(button);
+    };
+    if (job.status === 'held') quickButton('▶', 'Повернути в чергу', 'job-resume', 'Рядок повернено в чергу.');
+    else if (['pending', 'error', 'interrupted'].includes(job.status)) quickButton('Ⅱ', 'Призупинити цей рядок', 'job-hold', 'Рядок призупинено.');
+    else if (['done', 'exists'].includes(job.status)) quickButton('↻', 'Перегенерувати це зображення', 'job-regenerate', 'Рядок поставлено на перегенерацію; попередній файл збережено в _previous.');
+    if (quick.childElementCount) row.append(quick);
+    const open = () => { chosen = job.number; renderJobs(); renderDetail(); };
+    row.addEventListener('click', event => { if (!event.target.closest('button,a,input,textarea,select')) open(); });
+    row.addEventListener('keydown', event => { if ((event.key === 'Enter' || event.key === ' ') && event.target === row) { event.preventDefault(); open(); } }); fragment.append(row);
   }
   if (!jobs.length) fragment.append(node('div', 'empty', 'Немає рядків за цим фільтром.'));
   const scroll = $('jobs').scrollTop; $('jobs').replaceChildren(fragment); $('jobs').scrollTop = scroll;
@@ -205,6 +218,7 @@ function renderDetail() {
   else { const placeholder = node('div', 'detail-image empty-image'); placeholder.append(node('span', '', '◇'), node('small', '', job.status === 'running' ? 'Ілюстрація створюється…' : job.status === 'held' ? 'Цей рядок призупинено' : 'Тут з’явиться ілюстрація')); detail.append(placeholder); }
   detail.append(node('h3', '', job.name), status(job), node('p', 'detail-description', job.description));
   if (job.geminiAccount) detail.append(node('p', 'detail-description', `Акаунт Gemini: ${job.geminiAccount.name}`));
+  if (job.styleSource) detail.append(node('p', 'style-source', job.styleSource.type === 'template' ? `Надіслано зі стилем: ${job.styleSource.templateTitle} · ${job.styleSource.toneTitle}` : 'Надіслано з власним запитом стилю'));
   if (job.filename) detail.append(node('p', 'hint image-folder', `Папка: ${state.outputDir}`));
   if (job.error) detail.append(node('p', 'error-detail', job.error));
   if (['capability', 'refusal', 'tool-setup'].includes(job.errorKind)) {
@@ -273,6 +287,7 @@ function render() {
     `${state.status === 'paused' ? (state.jobs.find(job => job.errorKind === state.reason)?.error || state.jobs.find(job => job.error)?.error || '') + ' ' : ''}${state.batchFailed ? `Помилок у пакеті: ${state.batchFailed}. ` : ''}Наступний пакет: ${state.nextBatch ?? state.queued} · у черзі всього: ${state.queued}`;
   $('status-dot').classList.toggle('running', active());
   $('tools-status').textContent = `${state.oracle ? 'Сесії Chrome: Oracle 0.21.6' : '✕ Oracle відсутній'} · ${state.chrome ? '✓ Chrome' : '✕ Chrome відсутній'}`;
+  $('active-style-status').textContent = state.activeStyle?.type === 'template' ? `Стиль: ${state.activeStyle.templateTitle} · ${state.activeStyle.toneTitle}` : 'Стиль: власний запит';
   $('output-dir').textContent = state.outputDir;
   if (!dirty) { $('style').value = state.style; $('range').value = state.range; $('batch-size').value = state.batchSize ?? 25; $('request-delay').value = state.requestDelaySeconds ?? 30; $('background').checked = state.background !== false; $('diagnostics').checked = state.diagnostics === true; $('output-folder').value = state.outputDir; }
   fillTemplateSelectors(); renderTemplateLibrary();
@@ -283,7 +298,7 @@ function render() {
     for (const profile of state.chromeProfiles || []) { const option = node('option', '', `${profile.name}${profile.account ? ' · ' + profile.account : ''}`); option.value = profile.id; options.push(option); }
     $('chrome-profile').replaceChildren(...options); $('chrome-profile').value = state.chromeProfile || '';
   }
-  for (const id of ['style', 'range', 'range-all', 'range-unfinished', 'batch-size', 'request-delay', 'background', 'diagnostics', 'clear-diagnostics', 'output-folder', 'choose-output-folder', 'save-output-folder', 'save-settings', 'scan', 'login', 'import-button', 'template-select', 'tone-select', 'use-template', 'manage-templates']) $(id).disabled = active() || savingReady || preparing;
+  for (const id of ['style', 'range', 'range-all', 'range-unfinished', 'batch-size', 'request-delay', 'background', 'diagnostics', 'clear-diagnostics', 'output-folder', 'choose-output-folder', 'save-output-folder', 'save-settings', 'scan', 'login', 'import-button', 'template-select', 'tone-select', 'manage-templates']) $(id).disabled = active() || savingReady || preparing;
   $('save-ready').disabled = active() || savingReady || !state.jobs.some(job => ['done', 'exists'].includes(job.status));
   renderBrowserMode();
   $('start').textContent = preparing ? 'Перевіряємо готовність…' : `▶ Генерувати пакет · ${state.nextBatch ?? state.queued}`;
@@ -311,10 +326,10 @@ async function saveSettings(command = 'settings') {
   state = await request(command, { style: $('style').value, range: $('range').value, applyRange, regenerateSelected, batchSize: Number($('batch-size').value), requestDelaySeconds: $('request-delay').value === '' ? null : Number($('request-delay').value), background: $('background').checked, diagnostics: $('diagnostics').checked, browserMode: $('browser-mode').value, chromeProfile: $('chrome-profile').value, outputDir: $('output-folder').value });
   dirty = false; rangeDirty = false; render();
 }
-$('style').addEventListener('input', () => { dirty = true; renderDetail(); }); $('range').addEventListener('input', () => { dirty = true; rangeDirty = $('range').value !== state.range; validateRange(); });
-$('template-select').addEventListener('change', fillTemplateSelectors);
-$('tone-select').addEventListener('change', fillTemplateSelectors);
-listen('use-template', async () => { await action('template-use', { id: $('template-select').value, toneId: $('tone-select').value }); dirty = false; notify('Шаблон і палітру застосовано до нових генерацій.'); });
+$('style').addEventListener('input', () => { dirty = true; $('active-template-label').textContent = 'Власні зміни ще не збережено. Натисніть «Зберегти налаштування».'; renderDetail(); }); $('range').addEventListener('input', () => { dirty = true; rangeDirty = $('range').value !== state.range; validateRange(); });
+async function applySelectedTemplate(id, toneId) { await action('template-use', { id, toneId }); dirty = false; notify(`Активний стиль: ${state.activeStyle.templateTitle} · ${state.activeStyle.toneTitle}.`); }
+$('template-select').addEventListener('change', event => { const id = event.target.value; fillTemplateSelectors(id); applySelectedTemplate(id, $('tone-select').value).catch(error => notify(error.message)); });
+$('tone-select').addEventListener('change', event => { const id = $('template-select').value; const toneId = event.target.value; fillTemplateSelectors(id, toneId); applySelectedTemplate(id, toneId).catch(error => notify(error.message)); });
 listen('manage-templates', () => { renderTemplateLibrary(true); $('templates-dialog').showModal(); });
 listen('close-templates', () => $('templates-dialog').close());
 listen('add-template', () => { $('templates-dialog').close(); openTemplateEditor(); });

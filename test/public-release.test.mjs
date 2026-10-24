@@ -20,7 +20,10 @@ test('public release includes ten visual templates with four tones and full mana
   ]);
   assert.equal(templates.BUILTIN_TEMPLATES.length, 10);
   assert.ok(templates.BUILTIN_TEMPLATES.every(template => template.tones.length === 4 && template.image.kind === 'builtin'));
+  assert.match(templates.BUILTIN_TEMPLATES.find(template => template.id === 'studio-photo').prompt, /captured with a camera/);
+  assert.match(templates.BUILTIN_TEMPLATES.find(template => template.id === 'studio-photo').prompt, /no illustration, vector art, line art, paper-cut layers/i);
   for (const command of ['template-use', 'template-add', 'template-update', 'template-duplicate', 'template-delete', 'template-restore', 'template-preview-job']) assert.match(app, new RegExp(command));
+  assert.match(app, /applySelectedTemplate/); assert.match(html, /active-style-status/); assert.doesNotMatch(html, /id="use-template"/);
   assert.match(html, /Використати як обкладинку шаблону/); assert.match(html, /template-image/);
 });
 
@@ -39,6 +42,7 @@ test('public release is a generic template with per-row queue controls', async (
   assert.doesNotMatch([html, app, csv, server, readme, requirements, scenes, templates].join('\n'), legacyTerms);
   assert.match(csv, /Яблуко/); assert.match(csv, /Груша/); assert.match(csv, /Апельсин/);
   for (const command of ['job-update', 'job-hold', 'job-resume', 'job-regenerate', 'job-delete']) assert.match(app, new RegExp(command));
+  assert.match(app, /job-quick-actions/); assert.match(app, /styleSource/);
   assert.match(html, /1,3,5,7-10/); assert.match(app, /selectedNumbers/);
   assert.match(html, /range-unfinished/); assert.match(app, /formatRange/);
   assert.match(html, /update-banner/); assert.match(app, /checkForUpdates/);

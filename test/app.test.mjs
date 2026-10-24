@@ -51,25 +51,52 @@ test('range and filename validation keeps the original numbering', () => {
   assert.equal(imageType(PNG), '.png');
 });
 
-test('template library supports tones, editing, duplication, previews and restoring defaults', async () => {
-  const f = await fixture();
+test('template library applies strict styles, records their source, and supports management', async () => {
+  let sentPrompt = '';
+  const f = await fixture(async ({ prompt }) => { sentPrompt = prompt; return PNG; });
   try {
     let state = await f.studio.snapshot();
     assert.equal(state.templates.length, 10); assert.ok(state.templates.every(template => template.tones.length === 4 && template.imageUrl));
-    const original = state.templates[0]; const tone = original.tones[1];
+    const original = state.templates.find(template => template.id === 'studio-photo'); const tone = original.tones[1];
     state = await f.studio.action('template-use', { id: original.id, toneId: tone.id });
-    assert.equal(state.activeTemplateId, original.id); assert.equal(state.activeToneId, tone.id); assert.match(state.style, /Color tone:/); assert.ok(state.style.includes(tone.prompt)); assert.match(state.style, /no people, no hands\.$/);
+    assert.equal(state.activeTemplateId, original.id); assert.equal(state.activeToneId, tone.id);
+    assert.deepEqual(state.activeStyle, { type: 'template', templateId: original.id, templateTitle: original.title, toneId: tone.id, toneTitle: tone.title });
+    assert.match(state.style, /real-world studio photograph, captured with a camera/); assert.match(state.style, /no illustration, vector art, line art, paper-cut layers/i);
+    assert.ok(state.style.includes(tone.prompt)); assert.match(state.style, /no people, no hands\.$/);
+    await f.studio.action('settings', { style: state.style, range: '1' }); await f.studio.action('start'); await f.studio.settled();
+    state = await f.studio.snapshot();
+    assert.match(sentPrompt, /captured with a camera/); assert.match(sentPrompt, /Do not replace the requested subject with a generic emblem/);
+    assert.deepEqual(state.jobs[0].styleSource, { type: 'template', templateId: original.id, templateTitle: original.title, toneId: tone.id, toneTitle: tone.title });
     state = await f.studio.action('template-duplicate', { id: original.id });
     const copy = state.templates.find(template => !template.builtin); assert.ok(copy); assert.match(copy.title, /копія/);
     const editedTones = copy.tones.map((item, index) => ({ ...item, title: `Tone ${index + 1}` }));
     state = await f.studio.action('template-update', { id: copy.id, title: 'My reusable style', prompt: 'A consistent custom visual style.', tones: editedTones });
     assert.equal(state.templates.find(template => template.id === copy.id).title, 'My reusable style');
-    await f.studio.action('settings', { style: state.style, range: '1' }); await f.studio.action('start'); await f.studio.settled();
     state = await f.studio.action('template-preview-job', { id: copy.id, number: 1 });
     assert.deepEqual((await f.studio.templateImage(copy.id)).bytes, PNG);
     await f.studio.action('template-delete', { id: original.id }); assert.equal((await f.studio.snapshot()).templates.length, 10);
     state = await f.studio.action('template-restore'); assert.equal(state.templates.filter(template => template.builtin).length, 10); assert.equal(state.templates.length, 11);
   } finally { await f.clean(); }
+});
+
+test('startup upgrades untouched built-in prompts and preserves user edits', async () => {
+  const f = await fixture(); await f.studio.close();
+  const statePath = path.join(f.root, '.data/state.json'); const saved = JSON.parse(await fs.readFile(statePath));
+  saved.builtinTemplatesVersion = 1;
+  const studioPhoto = saved.templates.find(template => template.id === 'studio-photo'); studioPhoto.prompt = 'Old studio prompt'; studioPhoto.updatedAt = 1;
+  const edited = saved.templates.find(template => template.id === 'minimal-product'); edited.prompt = 'My edited built-in prompt'; edited.updatedAt = 123;
+  saved.activeTemplateId = studioPhoto.id; saved.activeToneId = studioPhoto.tones[0].id; saved.style = 'Old studio prompt';
+  await fs.writeFile(statePath, JSON.stringify(saved));
+  const again = await createStudio({ root: f.root, generate: async () => PNG });
+  try {
+    const state = await again.snapshot();
+    assert.equal(state.builtinTemplatesVersion, 2);
+    assert.match(state.templates.find(template => template.id === 'studio-photo').prompt, /captured with a camera/);
+    assert.match(state.style, /captured with a camera/); assert.match(state.style, /Color tone:/);
+    assert.equal(state.templates.find(template => template.id === 'minimal-product').prompt, 'My edited built-in prompt');
+  } finally {
+    await again.close(); assert.equal(path.dirname(f.root), ROOT); await fs.rm(f.root, { recursive: true, force: true });
+  }
 });
 
 test('individual queue rows can be edited, held, resumed, regenerated and removed safely', async () => {
@@ -82,7 +109,7 @@ test('individual queue rows can be edited, held, resumed, regenerated and remove
     state = await f.studio.action('job-resume', { number: 1 }); assert.equal(state.jobs[0].status, 'pending');
     await f.studio.action('settings', { style: DEFAULT_STYLE, range: '1' });
     await f.studio.action('start'); await f.studio.settled();
-    state = await f.studio.action('job-regenerate', { number: 1 }); assert.equal(state.jobs[0].status, 'pending');
+    state = await f.studio.action('job-regenerate', { number: 1 }); assert.equal(state.jobs[0].status, 'pending'); assert.equal(state.jobs[0].styleSource, undefined);
     const archived = await fs.readdir(path.join(f.root, 'output/images/_previous'));
     assert.equal(archived.length, 1); assert.match(archived[0], /1\. Зелене яблуко\.png$/);
     await f.studio.action('start'); await f.studio.settled();

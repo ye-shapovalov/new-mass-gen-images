@@ -10,7 +10,7 @@ import { findChrome, oracleCLI, generateWithGeminiBrowser, openLogin, assertBack
 import { listChromeProfiles } from './chrome-profiles.mjs';
 import { DEFAULT_GEMINI_URL, accountProfileKey, validateGeminiAccount, geminiAccountIndex } from './gemini-accounts.mjs';
 import { ensureSessionToken, migrateLegacyData, runtimeDataDirectory } from './runtime.mjs';
-import { BUILTIN_TEMPLATES, composeTemplateStyle, freshTemplates } from './templates.mjs';
+import { BUILTIN_TEMPLATES, BUILTIN_TEMPLATES_VERSION, composeTemplateStyle, freshTemplates } from './templates.mjs';
 
 export const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const busy = () => Object.assign(new Error('Спочатку поставте чергу на паузу й дочекайтеся завершення зображення.'), { status: 409 });
@@ -160,7 +160,7 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
   }
   function resetJobForQueue(job, status) {
     job.status = status; job.attempts = 0;
-    for (const key of ['error', 'errorKind', 'completedAt', 'startedAt', 'phase', 'log', 'geminiAccount', 'geminiProfile']) delete job[key];
+    for (const key of ['error', 'errorKind', 'completedAt', 'startedAt', 'phase', 'log', 'geminiAccount', 'geminiProfile', 'styleSource']) delete job[key];
     if (status === 'pending') delete job.filename;
   }
   async function applyQueueSelection(range, regenerateSelected) {
@@ -241,8 +241,22 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
     state.outputDir = outputDirectory(state.outputDir ?? defaultImages);
     await fs.mkdir(state.outputDir, { recursive: true });
     state.requestDelaySeconds ??= 30;
-    state.templates ??= freshTemplates();
+    if (!state.templates) { state.templates = freshTemplates(); state.builtinTemplatesVersion = BUILTIN_TEMPLATES_VERSION; }
     if (!Array.isArray(state.templates)) throw new Error('Некоректна локальна бібліотека шаблонів; файл стану не змінено.');
+    if ((state.builtinTemplatesVersion || 0) < BUILTIN_TEMPLATES_VERSION) {
+      const defaults = new Map(BUILTIN_TEMPLATES.map(template => [template.id, template]));
+      const upgraded = new Set();
+      state.templates = state.templates.map(template => {
+        if (!template.builtin || template.updatedAt !== 1 || !defaults.has(template.id)) return template;
+        upgraded.add(template.id); return structuredClone(defaults.get(template.id));
+      });
+      if (upgraded.has(state.activeTemplateId)) {
+        const template = findTemplate(state.activeTemplateId); const tone = template?.tones?.find(item => item.id === state.activeToneId) || template?.tones?.[0];
+        if (template && tone) { state.activeToneId = tone.id; state.style = composeTemplateStyle(template, tone.id); }
+      }
+      state.builtinTemplatesVersion = BUILTIN_TEMPLATES_VERSION;
+      log('Оновлено стандартні запити шаблонів. Власні та відредаговані шаблони залишено без змін.');
+    }
     for (const template of state.templates) validateTemplateFields(template);
     if (state.activeTemplateId && !state.templates.some(template => template.id === state.activeTemplateId)) delete state.activeTemplateId;
     if (state.activeTemplateId && !state.activeToneId) state.activeToneId = state.templates.find(template => template.id === state.activeTemplateId)?.tones?.[0]?.id;
@@ -267,11 +281,13 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
     const queued = state.jobs.filter(job => included.has(job.number) && job.status === 'pending').length;
     const safeState = structuredClone(state);
     safeState.templates = safeState.templates.map(({ image, ...template }) => ({ ...template, imageUrl: `/template-images/${template.id}?v=${template.updatedAt || 1}` }));
+    const activeTemplate = findTemplate(state.activeTemplateId); const activeTone = activeTemplate?.tones?.find(tone => tone.id === state.activeToneId);
     return { ...safeState, root, chromeProfiles,
       queued, nextBatch: Math.min(queued, state.batchSize || queued),
       batchDone: state.jobs.filter(job => state.batch?.numbers.includes(job.number) && ['done', 'exists'].includes(job.status)).length,
       batchFailed: state.jobs.filter(job => state.batch?.numbers.includes(job.number) && ['error', 'interrupted'].includes(job.status)).length,
       oracle: existsSync(oracleCLI(root)), chrome: Boolean(findChrome()),
+      activeStyle: activeTemplate && activeTone ? { type: 'template', templateId: activeTemplate.id, templateTitle: activeTemplate.title, toneId: activeTone.id, toneTitle: activeTone.title } : { type: 'custom', templateTitle: 'Власний запит' },
       generation: { provider: 'Gemini', transport: 'browser-ui', browserSessions: 'Oracle 0.21.6', background: state.background },
       jobs: state.jobs.map(job => ({ ...job, selected: included.has(job.number) })) };
   }
@@ -292,8 +308,10 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
           }
           delete state.waitingUntil;
           const prompt = buildPrompt(job, state.style);
+          const template = findTemplate(state.activeTemplateId); const tone = template?.tones?.find(item => item.id === state.activeToneId);
           const account = state.batch.accounts[accountIndex];
           job.geminiAccount = { id: account.id, name: account.name, url: accountURL(account) }; job.geminiProfile = accountKey();
+          job.styleSource = template && tone ? { type: 'template', templateId: template.id, templateTitle: template.title, toneId: tone.id, toneTitle: tone.title } : { type: 'custom', templateTitle: 'Власний запит' };
           job.status = 'running'; job.attempts++; job.startedAt = new Date().toISOString(); delete job.error; delete job.errorKind;
           job.phase = 'Починаємо спробу…';
           job.log = `${job.number}-${job.attempts}-${Date.now()}`;
@@ -491,7 +509,7 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
         }
         if (action === 'template-restore') {
           const custom = state.templates.filter(template => !template.builtin);
-          state.templates = [...freshTemplates(), ...custom];
+          state.templates = [...freshTemplates(), ...custom]; state.builtinTemplatesVersion = BUILTIN_TEMPLATES_VERSION;
           if (state.activeTemplateId) {
             const activeTemplate = findTemplate(state.activeTemplateId);
             if (!activeTemplate) { delete state.activeTemplateId; delete state.activeToneId; }
@@ -571,7 +589,7 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
           if (typeof body.scene !== 'string' || body.scene.length > 10000) throw invalid('Опис сцени має бути до 10 000 символів.');
           const held = job.status === 'held';
           Object.assign(job, { name: body.name.trim(), description: body.description.trim(), scene: body.scene.trim(), status: held ? 'held' : 'pending', attempts: 0 });
-          for (const key of ['error', 'errorKind', 'filename', 'completedAt', 'startedAt', 'phase', 'log', 'geminiAccount', 'geminiProfile']) delete job[key];
+          for (const key of ['error', 'errorKind', 'filename', 'completedAt', 'startedAt', 'phase', 'log', 'geminiAccount', 'geminiProfile', 'styleSource']) delete job[key];
           resetBatch(); await scan(); log(`№${job.number} відредаговано.`);
         } else if (action === 'job-hold') {
           const job = state.jobs.find(item => item.number === body.number);
@@ -587,7 +605,7 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
           try { await archiveImage(job); }
           catch (error) { if (error.code !== 'ENOENT') throw error; }
           job.status = 'pending'; job.attempts = 0;
-          for (const key of ['error', 'errorKind', 'filename', 'completedAt', 'startedAt', 'phase', 'log', 'geminiAccount', 'geminiProfile']) delete job[key];
+          for (const key of ['error', 'errorKind', 'filename', 'completedAt', 'startedAt', 'phase', 'log', 'geminiAccount', 'geminiProfile', 'styleSource']) delete job[key];
           resetBatch(); log(`№${job.number} поставлено на перегенерацію. Попереднє зображення збережено в папці _previous.`);
         } else if (action === 'job-delete') {
           if (state.jobs.length === 1) throw invalid('У серії має залишитися хоча б один рядок.');

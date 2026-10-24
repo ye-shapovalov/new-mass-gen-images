@@ -24,7 +24,8 @@
       </div>
       <label class="field-label" for="tone-select">Колірна палітра</label>
       <select id="tone-select"></select><div id="tone-swatches" class="tone-swatches" aria-label="Кольори вибраної палітри"></div>
-      <div class="template-actions"><button id="use-template" class="primary" type="button">Застосувати шаблон</button><button id="manage-templates" class="secondary" type="button">Керувати шаблонами</button></div>
+      <small id="active-template-label" class="active-template-label">Завантаження активного стилю…</small>
+      <div class="template-actions"><button id="manage-templates" class="secondary full" type="button">Керувати шаблонами</button></div>
       <label class="field-label" for="style">Текст стилю для всіх зображень</label>
       <textarea id="style" rows="8" maxlength="12000" aria-describedby="style-hint" placeholder="Опишіть композицію, палітру, освітлення та обмеження для всієї серії"></textarea>
       <small class="hint" id="style-hint">Цей текст можна повністю змінити. Він додається до кожного нового запиту після натискання «Зберегти налаштування». Натисніть на рядок у списку, щоб переглянути повний запит.</small>
@@ -113,7 +114,7 @@
         <div><span>У ВИБРАНІЙ ЧЕРЗІ</span><strong id="pending">—</strong><small>очікують генерації</small></div>
         <div class="progress-metric"><span>ГОТОВНІСТЬ СЕРІЇ</span><strong id="percent">—</strong><progress id="progress" max="100" value="0"></progress></div>
       </section>
-      <section class="runbar"><div class="run-status"><span id="status-dot" class="status-dot"></span><div><strong id="run-label">Завантаження студії…</strong><small id="run-detail">Читаємо збережений прогрес</small></div></div><div class="run-actions"><button id="scan" class="outline">↻ Перевірити файли</button><button id="stop" class="outline" disabled>■ Зупинити зараз</button><button id="pause" class="outline" disabled>Ⅱ Пауза</button><button id="start" class="primary">▶ Генерувати пакет</button></div></section>
+      <section class="runbar"><div class="run-status"><span id="status-dot" class="status-dot"></span><div><strong id="run-label">Завантаження студії…</strong><small id="active-style-status">Стиль: завантаження…</small><small id="run-detail">Читаємо збережений прогрес</small></div></div><div class="run-actions"><button id="scan" class="outline">↻ Перевірити файли</button><button id="stop" class="outline" disabled>■ Зупинити зараз</button><button id="pause" class="outline" disabled>Ⅱ Пауза</button><button id="start" class="primary">▶ Генерувати пакет</button></div></section>
       <section class="workspace">
         <div class="queue-panel">
           <div class="panel-heading"><h2>Рядки серії <span id="visible-count"></span></h2><div class="view-toggle" aria-label="Вигляд"><button id="list-view" class="active" aria-pressed="true">☰ Список</button><button id="grid-view" aria-pressed="false">▦ Галерея</button></div></div>
