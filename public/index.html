@@ -30,6 +30,7 @@
       <small class="hint" id="request-delay-hint">За замовчуванням 30 секунд після кожної спроби, включно з повторами та зміною акаунта. 0 — без затримки.</small>
       <label class="field-label" for="range">Які зображення генерувати</label>
       <input id="range" maxlength="5000" spellcheck="false" aria-describedby="range-hint" placeholder="Наприклад: 1,3,5,7-10">
+      <div class="range-actions"><button id="range-all" class="secondary" type="button">Усі рядки</button><button id="range-unfinished" class="secondary" type="button">Лише незавершені</button></div>
       <small class="hint" id="range-hint">Як у друці Word: 1-3, окремо 1 або вибірково 1,3,5,7-10. Вибрані незавершені рядки стануть у чергу, решта буде призупинена.</small>
       <button id="save-settings" class="secondary full">Зберегти налаштування</button>
     </section>
@@ -97,6 +98,7 @@
   <main>
     <header class="topbar"><span>РОБОЧИЙ ПРОСТІР <b>/</b> СЕРІЯ ЗОБРАЖЕНЬ</span><a class="mobile-settings" href="#settings">Налаштування ↓</a><span class="local-badge">● LOCAL STUDIO</span></header>
     <div class="main-content">
+      <a id="update-banner" class="update-banner" href="#" target="_blank" rel="noreferrer" hidden>Доступна нова версія New Mass Gen — завантажити ↗</a>
       <div class="heading"><div><div class="eyebrow">ВІД ТАБЛИЦІ ДО ЗОБРАЖЕНЬ</div><h1>Пакетна генерація<span>.</span></h1><p>Одна таблиця. Єдиний стиль. Уся серія під контролем.</p></div><a href="/api/report" class="outline download" download>↓ Звіт про прогрес</a></div>
       <section class="metrics" aria-label="Прогрес генерації">
         <div><span>РЯДКІВ У СЕРІЇ</span><strong id="total">—</strong><small>із вашої таблиці</small></div>

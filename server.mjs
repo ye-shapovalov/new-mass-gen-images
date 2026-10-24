@@ -36,6 +36,19 @@ async function clearDiagnosticFiles(directory) {
   return removed;
 }
 
+async function assertOutputWritable(outputDir) {
+  const probe = path.join(outputDir, `.mass-gen-write-${randomUUID()}.tmp`);
+  try {
+    await fs.mkdir(outputDir, { recursive: true });
+    await fs.readdir(outputDir);
+    await fs.writeFile(probe, '', { flag: 'wx' });
+    await fs.unlink(probe);
+  } catch {
+    await fs.unlink(probe).catch(() => {});
+    throw invalid('Не вдалося відкрити папку для збереження. Перевірте шлях і дозвіл на запис.');
+  }
+}
+
 function progressReport(state) {
   return {
     version: state.version, source: state.source, style: state.style, range: state.range,
@@ -78,6 +91,32 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
     state.events.push({ at: new Date().toISOString(), message });
     state.events = state.events.slice(-200);
   };
+  async function checkReadiness({ verifySession = false } = {}) {
+    if (['limit', 'login'].includes(state.reason)) throw invalid('Gemini зупинив пакет через ліміт або вхід. Після відновлення доступу натисніть «Повторити цей рядок».');
+    const enabledAccounts = accounts()?.filter(account => account.enabled);
+    if (!enabledAccounts?.length) throw invalid('Увімкніть хоча б один акаунт Gemini в цьому профілі.');
+    await scan();
+    const included = selected();
+    const pending = state.jobs.filter(job => included.has(job.number) && job.status === 'pending');
+    if (!pending.length) throw invalid('У вибраному діапазоні немає незавершених рядків.');
+    await assertOutputWritable(state.outputDir);
+    if (verifySession) {
+      if (generate === generateWithGeminiBrowser && !existsSync(oracleCLI(root))) throw invalid('Oracle не встановлено. Перевстановіть програму або виконайте npm ci.');
+      if (generate === generateWithGeminiBrowser && !findChrome()) throw invalid('Google Chrome не знайдено. Встановіть Chrome або задайте CHROME_PATH.');
+      if (state.browserMode === 'existing') await checkBrowser({ root, chromeProfile: state.chromeProfile });
+      else {
+        for (const account of enabledAccounts) {
+          try { await assertBackgroundChrome(accountProfile(account)); }
+          catch (error) { throw invalid(`Акаунт «${account.name}»: ${error.message}`); }
+        }
+        const first = enabledAccounts[0];
+        try { await checkSession({ root, profile: accountProfile(first) }); }
+        catch (error) { delete first.sessionCheckedAt; await save(); throw invalid(`Акаунт «${first.name}»: ${error.message}`); }
+        first.sessionCheckedAt = new Date().toISOString();
+      }
+    }
+    return { enabledAccounts, pending };
+  }
   const resetBatch = () => {
     delete state.batch;
     if (!state.reason || !state.jobs.some(job => job.errorKind === state.reason)) {
@@ -384,15 +423,7 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
           selectedNumbers(body.range, maxJobNumber());
           for (const job of state.jobs) buildPrompt(job, body.style);
           const outputDir = outputDirectory(body.outputDir === undefined ? state.outputDir : body.outputDir);
-          if (outputDir !== state.outputDir || action === 'save-ready') {
-            const probe = path.join(outputDir, `.mass-gen-write-${randomUUID()}.tmp`);
-            try {
-              await fs.mkdir(outputDir, { recursive: true });
-              await fs.readdir(outputDir);
-              await fs.writeFile(probe, '', { flag: 'wx' });
-              await fs.unlink(probe);
-            } catch { throw invalid('Не вдалося відкрити папку для збереження. Перевірте шлях і дозвіл на запис.'); }
-          }
+          if (outputDir !== state.outputDir || action === 'save-ready') await assertOutputWritable(outputDir);
           if (action === 'save-ready') {
             savedReady = { copied: 0, skipped: 0, failed: [] };
             const files = await fs.readdir(outputDir);
@@ -468,20 +499,12 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
           await atomicJSON(path.join(data, `backup-${Date.now()}.json`), state);
           state.jobs = jobs; state.source = String(body.filename || 'CSV').slice(0, 200); state.range = ''; state.status = 'idle'; delete state.reason; delete state.batch;
           log(`Імпортовано ${jobs.length} рядків. Попередній стан збережено в локальному резервному файлі.`); await scan();
+        } else if (action === 'preflight') {
+          const { enabledAccounts, pending } = await checkReadiness({ verifySession: true });
+          log(`Перевірка готовності успішна: ${pending.length} у черзі, акаунтів ${enabledAccounts.length}, папка доступна.`);
+          await save(); return { ...snapshot(), preflight: { ready: true, pending: pending.length, accounts: enabledAccounts.length } };
         } else if (action === 'start') {
-          if (['limit', 'login'].includes(state.reason)) throw invalid('Gemini зупинив пакет через ліміт або вхід. Після відновлення доступу натисніть «Повторити цей рядок».');
-          const enabledAccounts = accounts()?.filter(account => account.enabled);
-          if (!enabledAccounts?.length) throw invalid('Увімкніть хоча б один акаунт Gemini в цьому профілі.');
-          if (state.browserMode === 'dedicated' && state.background && generate === generateWithGeminiBrowser) {
-            for (const account of enabledAccounts) {
-              try { await assertBackgroundChrome(accountProfile(account)); }
-              catch (error) { throw invalid(`Акаунт «${account.name}»: ${error.message}`); }
-            }
-          }
-          await scan();
-          const included = selected();
-          const pending = state.jobs.filter(job => included.has(job.number) && job.status === 'pending');
-          if (!pending.length) throw invalid('У вибраному діапазоні немає незавершених рядків.');
+          const { enabledAccounts, pending } = await checkReadiness({ verifySession: generate === generateWithGeminiBrowser });
           state.batch = { numbers: pending.slice(0, state.batchSize || pending.length).map(job => job.number), accounts: structuredClone(enabledAccounts), startedAt: new Date().toISOString() };
           log(`Запущено пакет: ${state.batch.numbers.length} зображень.`);
           pause = false; controller = new AbortController(); state.status = 'running'; delete state.reason;

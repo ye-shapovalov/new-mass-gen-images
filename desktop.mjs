@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createStudio, listen } from './server.mjs';
 import { ensureSessionToken, migrateLegacyData, runtimeDataDirectory } from './runtime.mjs';
+import { isNewerVersion } from './update.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const smokeTest = process.argv.includes('--smoke-test');
@@ -41,6 +42,7 @@ async function createWindow(token) {
     minHeight: 700,
     show: false,
     title: 'New Mass Gen',
+    icon: path.join(root, 'build', 'icon.png'),
     autoHideMenuBar: true,
     backgroundColor: '#eef1f7',
     webPreferences: {
@@ -81,8 +83,7 @@ async function createWindow(token) {
 }
 
 async function createTray() {
-  const icon = await app.getFileIcon(process.execPath, { size: 'small' });
-  tray = new Tray(icon);
+  tray = new Tray(path.join(root, 'build', 'icon.png'));
   tray.setToolTip('New Mass Gen');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Відкрити New Mass Gen', click: showWindow },
@@ -129,6 +130,18 @@ async function start() {
     if (event.sender !== mainWindow?.webContents || !localURL(event.sender.getURL())) throw new Error('Недійсне вікно програми.');
     const result = await dialog.showOpenDialog(mainWindow, { title: 'Оберіть папку для зображень', properties: ['openDirectory', 'createDirectory'] });
     return result.canceled ? null : result.filePaths[0];
+  });
+  ipcMain.handle('check-for-updates', async event => {
+    if (event.sender !== mainWindow?.webContents || !localURL(event.sender.getURL())) throw new Error('Недійсне вікно програми.');
+    try {
+      const response = await fetch('https://api.github.com/repos/ye-shapovalov/new-mass-gen-images/releases/latest', {
+        headers: { Accept: 'application/vnd.github+json', 'User-Agent': `New-Mass-Gen/${app.getVersion()}` },
+        signal: AbortSignal.timeout(8000)
+      });
+      if (!response.ok) return { available: false };
+      const release = await response.json();
+      return { available: isNewerVersion(release.tag_name, app.getVersion()), version: release.tag_name, url: release.html_url };
+    } catch { return { available: false }; }
   });
 
   await createWindow(token);

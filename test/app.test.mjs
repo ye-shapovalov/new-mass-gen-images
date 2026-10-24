@@ -591,6 +591,17 @@ test('account login and hidden session checks use only that account profile and 
   } finally { await f.clean(); }
 });
 
+test('preflight checks the queue, writable folder and first enabled account without generating', async () => {
+  const checks = []; let generations = 0;
+  const f = await fixture(async () => { generations++; return PNG; }, { checkSession: async options => checks.push(options) });
+  try {
+    const state = await f.studio.action('preflight');
+    assert.deepEqual(state.preflight, { ready: true, pending: 3, accounts: 1 });
+    assert.equal(checks.length, 1); assert.equal(generations, 0);
+    assert.equal((await fs.readdir(state.outputDir)).some(file => file.startsWith('.mass-gen-write-')), false);
+  } finally { await f.clean(); }
+});
+
 test('stop now aborts the current request and never submits the next term', async () => {
   let started; const entered = new Promise(resolve => started = resolve); let calls = 0;
   const f = await fixture(({ signal }) => new Promise((resolve, reject) => {

@@ -4,7 +4,7 @@ const $ = id => document.getElementById(id);
 const labels = { pending: 'У черзі', held: 'Призупинено', exists: 'Вже збережено', done: 'Готово', running: 'Генерація', error: 'Помилка', interrupted: 'Перервано' };
 const runLabels = { idle: 'Готово до запуску пакета', paused: 'Пакет на паузі', pausing: 'Зупиняємо після поточного зображення', running: 'Генеруємо пакет автоматично', complete: 'Пакет завершено' };
 let state, chosen, filter = 'all', grid = false, dirty = false, rangeDirty = false, csv, csvName, noticeTimer, renderingKey;
-let accountsRenderingKey, savingReady = false;
+let accountsRenderingKey, savingReady = false, preparing = false;
 function renderBrowserMode() {
   const existing = $('browser-mode').value === 'existing';
   $('existing-profile-settings').hidden = !existing;
@@ -104,6 +104,17 @@ function validateRange() {
     input.setCustomValidity(error.message); hint.classList.add('invalid'); hint.textContent = error.message; return false;
   }
 }
+function formatRange(numbers) {
+  const sorted = [...new Set(numbers)].sort((a, b) => a - b); const parts = [];
+  for (let i = 0; i < sorted.length;) {
+    let end = i; while (end + 1 < sorted.length && sorted[end + 1] === sorted[end] + 1) end++;
+    parts.push(end === i ? String(sorted[i]) : `${sorted[i]}-${sorted[end]}`); i = end + 1;
+  }
+  return parts.join(',');
+}
+function setRange(value) {
+  $('range').value = value; dirty = true; rangeDirty = value !== state.range; validateRange();
+}
 function status(job) { return node('span', `status ${job.status}`, labels[job.status] || job.status); }
 function renderJobs() {
   const search = $('search').value.toLocaleLowerCase('uk');
@@ -201,11 +212,11 @@ function render() {
     for (const profile of state.chromeProfiles || []) { const option = node('option', '', `${profile.name}${profile.account ? ' · ' + profile.account : ''}`); option.value = profile.id; options.push(option); }
     $('chrome-profile').replaceChildren(...options); $('chrome-profile').value = state.chromeProfile || '';
   }
-  for (const id of ['style', 'range', 'batch-size', 'request-delay', 'background', 'diagnostics', 'clear-diagnostics', 'output-folder', 'choose-output-folder', 'save-output-folder', 'save-settings', 'scan', 'login', 'import-button']) $(id).disabled = active() || savingReady;
+  for (const id of ['style', 'range', 'range-all', 'range-unfinished', 'batch-size', 'request-delay', 'background', 'diagnostics', 'clear-diagnostics', 'output-folder', 'choose-output-folder', 'save-output-folder', 'save-settings', 'scan', 'login', 'import-button']) $(id).disabled = active() || savingReady || preparing;
   $('save-ready').disabled = active() || savingReady || !state.jobs.some(job => ['done', 'exists'].includes(job.status));
   renderBrowserMode();
-  $('start').textContent = `▶ Генерувати пакет · ${state.nextBatch ?? state.queued}`;
-  $('start').disabled = active() || savingReady || ['limit', 'login', 'capability'].includes(state.reason) || !state.oracle || !state.chrome || state.queued === 0;
+  $('start').textContent = preparing ? 'Перевіряємо готовність…' : `▶ Генерувати пакет · ${state.nextBatch ?? state.queued}`;
+  $('start').disabled = active() || savingReady || preparing || ['limit', 'login', 'capability'].includes(state.reason) || !state.oracle || !state.chrome || state.queued === 0;
   $('pause').disabled = !active() || state.status === 'pausing';
   $('stop').disabled = !active();
   const key = JSON.stringify([state.jobs, chosen, grid, filter, $('search').value]);
@@ -230,6 +241,12 @@ async function saveSettings(command = 'settings') {
   dirty = false; rangeDirty = false; render();
 }
 $('style').addEventListener('input', () => { dirty = true; renderDetail(); }); $('range').addEventListener('input', () => { dirty = true; rangeDirty = $('range').value !== state.range; validateRange(); });
+listen('range-all', () => setRange(''));
+listen('range-unfinished', () => {
+  const numbers = state.jobs.filter(job => !['done', 'exists'].includes(job.status)).map(job => job.number);
+  if (!numbers.length) throw new Error('Усі рядки вже мають готові зображення.');
+  setRange(formatRange(numbers));
+});
 $('batch-size').addEventListener('change', () => dirty = true);
 $('request-delay').addEventListener('input', () => dirty = true);
 $('output-folder').addEventListener('input', () => dirty = true);
@@ -260,7 +277,11 @@ listen('save-ready', async () => {
     $('save-ready-result').hidden = false; notify(summary);
   } finally { savingReady = false; render(); }
 });
-listen('start', async () => { if (dirty) await saveSettings(); await action('start'); });
+listen('start', async () => {
+  preparing = true; render();
+  try { if (dirty) await saveSettings(); notify('Перевіряємо папку, Chrome та вхід першого акаунта…'); await action('start'); }
+  finally { preparing = false; render(); }
+});
 listen('pause', () => action('pause')); listen('scan', async () => { await action('scan'); notify('Файли перевірено.'); });
 listen('stop', () => action('stop'));
 listen('login', async () => { if (dirty) await saveSettings(); await action('login'); notify(state.browserMode === 'existing' ? 'Відкрито ваш Chrome. Кнопкою 2 скопіюйте адресу доступу та відкрийте її в адресному рядку Chrome.' : state.background ? 'Увійдіть у Gemini, потім закрийте це вікно. Пакет працюватиме без видимих вікон.' : 'Увійдіть у Gemini та запустіть пакет.'); });
@@ -294,4 +315,11 @@ async function refresh() {
   catch (error) { $('run-label').textContent = error.status === 401 ? 'Потрібен захищений локальний запуск' : 'Сервер не відповідає'; $('run-detail').textContent = 'Відкрийте «Відкрити.cmd», щоб продовжити зі збереженого місця.'; $('start').disabled = true; }
   finally { refreshing = false; }
 }
-await refresh(); setInterval(refresh, 2500);
+await refresh();
+if (window.newMassGenDesktop?.checkForUpdates) {
+  window.newMassGenDesktop.checkForUpdates().then(update => {
+    if (!update?.available || !/^https:\/\/github\.com\/ye-shapovalov\/new-mass-gen-images\/releases\//.test(update.url || '')) return;
+    const banner = $('update-banner'); banner.href = update.url; banner.textContent = `Доступна версія ${update.version} — завантажити ↗`; banner.hidden = false;
+  }).catch(() => {});
+}
+setInterval(refresh, 2500);

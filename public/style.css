@@ -18,3 +18,4 @@
 .generation-help{margin-top:12px;padding:12px;border:1px solid #ead8a8;border-radius:7px;background:#fff9e8;color:#6f5b25;font-size:10px;line-height:1.6}.generation-help strong{display:block;font-size:11px}.generation-help p{margin:7px 0 0}
 .hint.invalid{color:#ff9a8f}#range:invalid{border-color:#d76357}
 .dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}.dialog-actions button{width:auto}
+.range-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.range-actions button{padding:7px;font-size:10px}.update-banner{display:block;margin:-16px 0 22px;padding:11px 14px;border:1px solid #cfd8ff;border-radius:8px;background:#edf1ff;color:#4159cf;text-decoration:none;font-size:12px;font-weight:650}.update-banner[hidden]{display:none}

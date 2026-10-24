@@ -26,5 +26,8 @@ test('public release is a generic template with per-row queue controls', async (
   assert.match(csv, /Яблуко/); assert.match(csv, /Груша/); assert.match(csv, /Апельсин/);
   for (const command of ['job-update', 'job-hold', 'job-resume', 'job-regenerate', 'job-delete']) assert.match(app, new RegExp(command));
   assert.match(html, /1,3,5,7-10/); assert.match(app, /selectedNumbers/);
+  assert.match(html, /range-unfinished/); assert.match(app, /formatRange/);
+  assert.match(html, /update-banner/); assert.match(app, /checkForUpdates/);
+  assert.match(server, /action === 'preflight'/); assert.match(server, /checkReadiness/);
   assert.match(html, /regenerate-dialog/); assert.match(app, /applyRange/); assert.match(server, /applyQueueSelection/);
 });

@@ -1,0 +1,42 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:desktop
+      - run: npm run check:release
+      - run: npm run dist:win
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: New-Mass-Gen-Windows
+          path: |
+            dist/New-Mass-Gen-Setup-*.exe
+            dist/New-Mass-Gen-Portable-*.exe
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: gh release create $env:GITHUB_REF_NAME dist/New-Mass-Gen-Setup-*.exe dist/New-Mass-Gen-Portable-*.exe --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
