@@ -150,6 +150,8 @@ async function start() {
   if (smokeTest) {
     const healthy = await mainWindow.webContents.executeJavaScript("fetch('/api/state').then(response => response.ok)");
     if (!healthy) throw new Error('Desktop UI не підключився до локального сервера.');
+    const templatesReady = await mainWindow.webContents.executeJavaScript("new Promise(resolve => { let tries = 0; const check = async () => { const images = [...document.querySelectorAll('.template-card > img')]; if (document.querySelectorAll('#template-select option').length === 10 && images.length === 10) { const responses = await Promise.all(images.map(image => fetch(image.src))); return resolve(responses.every(response => response.ok && response.headers.get('content-type')?.startsWith('image/'))); } if (++tries > 200) resolve(false); else setTimeout(check, 25); }; check(); })");
+    if (!templatesReady) throw new Error('Бібліотека шаблонів не завантажилася в інтерфейсі.');
     console.log('ELECTRON_SMOKE_OK');
     app.quit();
   }

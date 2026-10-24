@@ -12,7 +12,7 @@ const privateContent = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
   /(?:api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*['"][^'"\s]{12,}/i
 ];
-const genericTemplateFiles = new Set(['input.csv', 'scenes.json', 'README.md', 'requirements.md', 'public/index.html', 'public/app.js', 'server.mjs']);
+const genericTemplateFiles = new Set(['input.csv', 'scenes.json', 'README.md', 'requirements.md', 'templates.mjs', 'public/index.html', 'public/app.js', 'server.mjs']);
 const legacyTopic = new RegExp(String.fromCodePoint(1076, 1088, 1086, 1085) + '|' + String.fromCodePoint(1073, 1087, 1083, 1072) + '|drone|uav', 'i');
 const problems = [];
 

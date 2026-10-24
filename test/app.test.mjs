@@ -51,6 +51,27 @@ test('range and filename validation keeps the original numbering', () => {
   assert.equal(imageType(PNG), '.png');
 });
 
+test('template library supports tones, editing, duplication, previews and restoring defaults', async () => {
+  const f = await fixture();
+  try {
+    let state = await f.studio.snapshot();
+    assert.equal(state.templates.length, 10); assert.ok(state.templates.every(template => template.tones.length === 4 && template.imageUrl));
+    const original = state.templates[0]; const tone = original.tones[1];
+    state = await f.studio.action('template-use', { id: original.id, toneId: tone.id });
+    assert.equal(state.activeTemplateId, original.id); assert.equal(state.activeToneId, tone.id); assert.match(state.style, /Color tone:/); assert.ok(state.style.includes(tone.prompt)); assert.match(state.style, /no people, no hands\.$/);
+    state = await f.studio.action('template-duplicate', { id: original.id });
+    const copy = state.templates.find(template => !template.builtin); assert.ok(copy); assert.match(copy.title, /копія/);
+    const editedTones = copy.tones.map((item, index) => ({ ...item, title: `Tone ${index + 1}` }));
+    state = await f.studio.action('template-update', { id: copy.id, title: 'My reusable style', prompt: 'A consistent custom visual style.', tones: editedTones });
+    assert.equal(state.templates.find(template => template.id === copy.id).title, 'My reusable style');
+    await f.studio.action('settings', { style: state.style, range: '1' }); await f.studio.action('start'); await f.studio.settled();
+    state = await f.studio.action('template-preview-job', { id: copy.id, number: 1 });
+    assert.deepEqual((await f.studio.templateImage(copy.id)).bytes, PNG);
+    await f.studio.action('template-delete', { id: original.id }); assert.equal((await f.studio.snapshot()).templates.length, 10);
+    state = await f.studio.action('template-restore'); assert.equal(state.templates.filter(template => template.builtin).length, 10); assert.equal(state.templates.length, 11);
+  } finally { await f.clean(); }
+});
+
 test('individual queue rows can be edited, held, resumed, regenerated and removed safely', async () => {
   const f = await fixture();
   try {
@@ -765,6 +786,7 @@ test('local HTTP imports, generates, downloads and rejects foreign-site mutation
     assert.equal(chromeSession.status, 200); assert.match(await chromeSession.text(), /Підключаємо студію/);
     assert.equal((await fetch(`${url}/api/state`)).status, 401);
     assert.equal((await fetch(`${url}/images/2`)).status, 401);
+    assert.equal((await fetch(`${url}/template-images/minimal-product`)).status, 401);
     assert.equal((await fetch(`${url}/session/${'x'.repeat(43)}`, { redirect: 'manual' })).status, 401);
     const bootstrap = await fetch(`${url}/session/${server.sessionToken}`, { redirect: 'manual' });
     assert.equal(bootstrap.status, 302); assert.equal(bootstrap.headers.get('location'), '/');

@@ -10,10 +10,37 @@ import { findChrome, oracleCLI, generateWithGeminiBrowser, openLogin, assertBack
 import { listChromeProfiles } from './chrome-profiles.mjs';
 import { DEFAULT_GEMINI_URL, accountProfileKey, validateGeminiAccount, geminiAccountIndex } from './gemini-accounts.mjs';
 import { ensureSessionToken, migrateLegacyData, runtimeDataDirectory } from './runtime.mjs';
+import { BUILTIN_TEMPLATES, composeTemplateStyle, freshTemplates } from './templates.mjs';
 
 export const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const busy = () => Object.assign(new Error('Спочатку поставте чергу на паузу й дочекайтеся завершення зображення.'), { status: 409 });
 const invalid = message => Object.assign(new Error(message), { status: 400 });
+const TEMPLATE_ID = /^[a-z0-9-]{1,80}$/;
+function validateTemplateFields(body, current = {}) {
+  const title = typeof body.title === 'string' ? body.title.trim() : current.title;
+  const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : current.prompt;
+  const tones = body.tones === undefined ? current.tones : body.tones;
+  if (!title || title.length > 120) throw invalid('Назва шаблону має містити від 1 до 120 символів.');
+  if (!prompt || prompt.length > 12000) throw invalid('Запит шаблону має містити від 1 до 12 000 символів.');
+  if (!Array.isArray(tones) || tones.length !== 4) throw invalid('Додайте рівно чотири варіанти палітри.');
+  const cleanTones = tones.map((tone, index) => {
+    const toneTitle = typeof tone?.title === 'string' ? tone.title.trim() : '';
+    const tonePrompt = typeof tone?.prompt === 'string' ? tone.prompt.trim() : '';
+    const colors = Array.isArray(tone?.colors) ? tone.colors.map(String) : [];
+    if (!toneTitle || toneTitle.length > 80 || !tonePrompt || tonePrompt.length > 1000) throw invalid(`Заповніть назву й опис палітри ${index + 1}.`);
+    if (colors.length !== 4 || colors.some(color => !/^#[0-9a-f]{6}$/i.test(color))) throw invalid(`Палітра ${index + 1} повинна мати чотири HEX-кольори.`);
+    return { id: TEMPLATE_ID.test(tone.id || '') ? tone.id : `tone-${index + 1}`, title: toneTitle, prompt: tonePrompt, colors };
+  });
+  return { title, prompt, tones: cleanTones };
+}
+function decodeTemplateImage(value) {
+  if (typeof value !== 'string') return null;
+  const match = value.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) throw invalid('Оберіть PNG, JPEG або WebP для обкладинки шаблону.');
+  const bytes = Buffer.from(match[2], 'base64');
+  if (!bytes.length || bytes.length > 10 * 1024 * 1024) throw invalid('Обкладинка шаблону має бути до 10 МБ.');
+  const extension = imageType(bytes); return { bytes, extension };
+}
 function outputDirectory(value) {
   if (typeof value !== 'string' || !value.trim() || value.length > 32767 || value.includes('\0') || !path.isAbsolute(value.trim())) throw invalid('Вкажіть повний шлях до папки зображень, наприклад C:\\Pictures\\New Mass Gen.');
   return path.resolve(value.trim());
@@ -63,8 +90,8 @@ function progressReport(state) {
 export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, generate = generateWithGeminiBrowser, login = openLogin, listProfiles = listChromeProfiles, checkBrowser = checkExistingChrome, checkSession = checkGeminiSession } = {}) {
   const data = dataDir || (path.resolve(root) === path.resolve(ROOT) ? runtimeDataDirectory() : path.join(root, '.data'));
   const defaultImages = defaultOutputDir || path.join(root, 'output/images');
-  const profile = path.join(data, 'browser-profile'); const stateFile = path.join(data, 'state.json');
-  await fs.mkdir(data, { recursive: true });
+  const profile = path.join(data, 'browser-profile'); const stateFile = path.join(data, 'state.json'); const templateImages = path.join(data, 'template-images');
+  await fs.mkdir(templateImages, { recursive: true });
   const lockFile = path.join(data, 'server.lock');
   try { await fs.writeFile(lockFile, String(process.pid), { flag: 'wx' }); }
   catch (error) {
@@ -163,6 +190,17 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
     delete state.reason; log('Є увімкнений акаунт Gemini. Пакет можна продовжити кнопкою запуску.');
   }
 
+  const findTemplate = id => state.templates.find(template => template.id === id);
+  async function saveTemplateImage(id, dataURL) {
+    const image = decodeTemplateImage(dataURL); if (!image) return null;
+    const filename = `${id}-${Date.now()}${image.extension}`;
+    await fs.writeFile(path.join(templateImages, filename), image.bytes, { flag: 'wx' });
+    return { kind: 'custom', file: filename };
+  }
+  async function removeCustomTemplateImage(image) {
+    if (image?.kind === 'custom' && path.basename(image.file || '') === image.file) await fs.unlink(path.join(templateImages, image.file)).catch(() => {});
+  }
+
   async function imageInFolder(folder, job, files) {
     const stem = outputStem(job).toLocaleLowerCase('uk');
     for (const file of files) {
@@ -203,6 +241,11 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
     state.outputDir = outputDirectory(state.outputDir ?? defaultImages);
     await fs.mkdir(state.outputDir, { recursive: true });
     state.requestDelaySeconds ??= 30;
+    state.templates ??= freshTemplates();
+    if (!Array.isArray(state.templates)) throw new Error('Некоректна локальна бібліотека шаблонів; файл стану не змінено.');
+    for (const template of state.templates) validateTemplateFields(template);
+    if (state.activeTemplateId && !state.templates.some(template => template.id === state.activeTemplateId)) delete state.activeTemplateId;
+    if (state.activeTemplateId && !state.activeToneId) state.activeToneId = state.templates.find(template => template.id === state.activeTemplateId)?.tones?.[0]?.id;
     state.diagnostics ??= false;
     if (!state.diagnostics) await clearDiagnosticFiles(data);
     delete state.waitingUntil;
@@ -222,7 +265,9 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
   function snapshot() {
     const included = selected();
     const queued = state.jobs.filter(job => included.has(job.number) && job.status === 'pending').length;
-    return { ...structuredClone(state), root, chromeProfiles,
+    const safeState = structuredClone(state);
+    safeState.templates = safeState.templates.map(({ image, ...template }) => ({ ...template, imageUrl: `/template-images/${template.id}?v=${template.updatedAt || 1}` }));
+    return { ...safeState, root, chromeProfiles,
       queued, nextBatch: Math.min(queued, state.batchSize || queued),
       batchDone: state.jobs.filter(job => state.batch?.numbers.includes(job.number) && ['done', 'exists'].includes(job.status)).length,
       batchFailed: state.jobs.filter(job => state.batch?.numbers.includes(job.number) && ['error', 'interrupted'].includes(job.status)).length,
@@ -403,6 +448,65 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
           if (state.browserMode !== 'existing') throw invalid('Спочатку оберіть «Мій звичайний Chrome» та профіль.');
           await checkBrowser({ root, chromeProfile: state.chromeProfile }); return snapshot();
         }
+        if (action === 'template-use') {
+          const template = findTemplate(body.id); const tone = template?.tones?.find(item => item.id === body.toneId);
+          if (!template || !tone) throw invalid('Шаблон або палітру не знайдено.');
+          state.style = composeTemplateStyle(template, tone.id); state.activeTemplateId = template.id; state.activeToneId = tone.id;
+          log(`Обрано шаблон «${template.title}» · палітра «${tone.title}».`); await save(); return snapshot();
+        }
+        if (action === 'template-add') {
+          if (state.templates.length >= 100) throw invalid('У бібліотеці вже 100 шаблонів.');
+          const fields = validateTemplateFields(body); const id = `custom-${randomUUID()}`;
+          const image = await saveTemplateImage(id, body.imageData);
+          if (!image) throw invalid('Додайте обкладинку нового шаблону.');
+          state.templates.push({ id, ...fields, image, builtin: false, updatedAt: Date.now() });
+          await save(); return snapshot();
+        }
+        if (action === 'template-update') {
+          const template = findTemplate(body.id); if (!template) throw invalid('Шаблон не знайдено.');
+          const fields = validateTemplateFields(body, template); const nextImage = body.imageData ? await saveTemplateImage(template.id, body.imageData) : null;
+          if (nextImage) { await removeCustomTemplateImage(template.image); template.image = nextImage; }
+          Object.assign(template, fields, { updatedAt: Date.now() });
+          if (state.activeTemplateId === template.id) {
+            if (!template.tones.some(tone => tone.id === state.activeToneId)) state.activeToneId = template.tones[0].id;
+            state.style = composeTemplateStyle(template, state.activeToneId);
+          }
+          await save(); return snapshot();
+        }
+        if (action === 'template-duplicate') {
+          const source = findTemplate(body.id); if (!source) throw invalid('Шаблон не знайдено.');
+          if (state.templates.length >= 100) throw invalid('У бібліотеці вже 100 шаблонів.');
+          const copy = structuredClone(source); copy.id = `custom-${randomUUID()}`; copy.title = `${source.title} — копія`.slice(0, 120); copy.builtin = false; copy.updatedAt = Date.now();
+          if (source.image?.kind === 'custom' && path.basename(source.image.file || '') === source.image.file) {
+            const extension = path.extname(source.image.file); const filename = `${copy.id}-${Date.now()}${extension}`;
+            await fs.copyFile(path.join(templateImages, source.image.file), path.join(templateImages, filename)); copy.image = { kind: 'custom', file: filename };
+          }
+          state.templates.push(copy); await save(); return snapshot();
+        }
+        if (action === 'template-delete') {
+          const index = state.templates.findIndex(template => template.id === body.id); if (index < 0) throw invalid('Шаблон не знайдено.');
+          const [template] = state.templates.splice(index, 1); await removeCustomTemplateImage(template.image);
+          if (state.activeTemplateId === template.id) { delete state.activeTemplateId; delete state.activeToneId; }
+          await save(); return snapshot();
+        }
+        if (action === 'template-restore') {
+          const custom = state.templates.filter(template => !template.builtin);
+          state.templates = [...freshTemplates(), ...custom];
+          if (state.activeTemplateId) {
+            const activeTemplate = findTemplate(state.activeTemplateId);
+            if (!activeTemplate) { delete state.activeTemplateId; delete state.activeToneId; }
+            else { if (!activeTemplate.tones.some(tone => tone.id === state.activeToneId)) state.activeToneId = activeTemplate.tones[0].id; state.style = composeTemplateStyle(activeTemplate, state.activeToneId); }
+          }
+          await save(); return snapshot();
+        }
+        if (action === 'template-preview-job') {
+          const template = findTemplate(body.id); const job = state.jobs.find(item => item.number === body.number);
+          if (!template) throw invalid('Шаблон не знайдено.');
+          if (!job?.filename || !['done', 'exists'].includes(job.status) || path.basename(job.filename) !== job.filename) throw invalid('Оберіть готове зображення.');
+          const bytes = await fs.readFile(path.join(state.outputDir, job.filename)); const extension = imageType(bytes); const filename = `${template.id}-${Date.now()}${extension}`;
+          await fs.writeFile(path.join(templateImages, filename), bytes, { flag: 'wx' }); await removeCustomTemplateImage(template.image);
+          template.image = { kind: 'custom', file: filename }; template.updatedAt = Date.now(); await save(); return snapshot();
+        }
         if (action === 'settings' || action === 'save-ready') {
           if (typeof body.style !== 'string' || body.style.length > 12000 || !body.style.trim()) throw invalid('Стиль має містити від 1 до 12 000 символів.');
           if (typeof body.range !== 'string') throw invalid('Некоректний діапазон.');
@@ -448,6 +552,10 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
           await scan();
           if (savedReady) log(`Збереження готових: записано ${savedReady.copied}, уже є ${savedReady.skipped}, не вдалося ${savedReady.failed.length}.`);
           state.style = body.style; state.range = body.range; state.batchSize = batchSize; state.background = background;
+          if (state.activeTemplateId) {
+            const template = findTemplate(state.activeTemplateId);
+            if (!template || composeTemplateStyle(template, state.activeToneId) !== state.style) { delete state.activeTemplateId; delete state.activeToneId; }
+          }
           state.diagnostics = diagnostics;
           if (!diagnostics) await clearDiagnosticFiles(data);
           state.requestDelaySeconds = requestDelaySeconds;
@@ -518,6 +626,13 @@ export async function createStudio({ root = ROOT, dataDir, defaultOutputDir, gen
       if (!job?.filename || path.basename(job.filename) !== job.filename) return null;
       return { bytes: await fs.readFile(path.join(state.outputDir, job.filename)), filename: job.filename };
     },
+    async templateImage(id) {
+      if (!TEMPLATE_ID.test(id)) return null;
+      const template = findTemplate(id); const image = template?.image;
+      if (!image || path.basename(image.file || '') !== image.file || !['builtin', 'custom'].includes(image.kind)) return null;
+      const file = image.kind === 'builtin' ? path.join(root, 'public', 'template-previews', image.file) : path.join(templateImages, image.file);
+      try { const bytes = await fs.readFile(file); imageType(bytes); return { bytes, filename: image.file }; } catch { return null; }
+    },
     async jobLog(number) {
       const job = state.jobs.find(item => item.number === number);
       if (!job?.log || !/^\d+-\d+-\d+$/.test(job.log)) return 'Запит для цього рядка ще не виконувався.';
@@ -543,7 +658,7 @@ async function readBody(req) {
   const chunks = []; let length = 0;
   for await (const chunk of req) {
     length += chunk.length;
-    if (length > 12 * 1024 * 1024) throw invalid('Запит завеликий.');
+    if (length > 15 * 1024 * 1024) throw invalid('Запит завеликий.');
     chunks.push(chunk);
   }
   try { const body = JSON.parse(Buffer.concat(chunks).toString()); if (!body || Array.isArray(body) || typeof body !== 'object') throw new Error(); return body; }
@@ -570,7 +685,7 @@ export async function listen(studio, { port = 0, root = ROOT, token = randomByte
         res.writeHead(302, { Location: '/', 'Set-Cookie': `${cookieName}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000`, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
         return res.end();
       }
-      const protectedPath = url.pathname.startsWith('/api/') || url.pathname.startsWith('/images/') || url.pathname.startsWith('/logs/');
+      const protectedPath = url.pathname.startsWith('/api/') || url.pathname.startsWith('/images/') || url.pathname.startsWith('/logs/') || url.pathname.startsWith('/template-images/');
       if (protectedPath && !authorized(req)) return send(res, 401, { message: 'Запустіть студію через «Відкрити.cmd».' });
       if (req.method === 'GET') {
         if (staticFiles[url.pathname]) { const [file, type] = staticFiles[url.pathname]; return send(res, 200, await fs.readFile(path.join(root, file)), type); }
@@ -582,6 +697,8 @@ export async function listen(studio, { port = 0, root = ROOT, token = randomByte
         }
         const media = url.pathname.match(/^\/images\/(\d+)$/);
         if (media) { const image = await studio.image(Number(media[1])); if (!image) return send(res, 404, 'Не знайдено.', 'text/plain'); return send(res, 200, image.bytes, imageType(image.bytes) === '.jpg' ? 'image/jpeg' : imageType(image.bytes) === '.png' ? 'image/png' : 'image/webp'); }
+        const templateMedia = url.pathname.match(/^\/template-images\/([a-z0-9-]+)$/);
+        if (templateMedia) { const image = await studio.templateImage(templateMedia[1]); if (!image) return send(res, 404, 'Не знайдено.', 'text/plain'); const type = imageType(image.bytes); return send(res, 200, image.bytes, type === '.jpg' ? 'image/jpeg' : type === '.png' ? 'image/png' : 'image/webp'); }
         const log = url.pathname.match(/^\/logs\/(\d+)$/);
         if (log) return send(res, 200, await studio.jobLog(Number(log[1])), 'text/plain');
       }

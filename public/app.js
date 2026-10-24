@@ -4,7 +4,7 @@ const $ = id => document.getElementById(id);
 const labels = { pending: 'У черзі', held: 'Призупинено', exists: 'Вже збережено', done: 'Готово', running: 'Генерація', error: 'Помилка', interrupted: 'Перервано' };
 const runLabels = { idle: 'Готово до запуску пакета', paused: 'Пакет на паузі', pausing: 'Зупиняємо після поточного зображення', running: 'Генеруємо пакет автоматично', complete: 'Пакет завершено' };
 let state, chosen, filter = 'all', grid = false, dirty = false, rangeDirty = false, csv, csvName, noticeTimer, renderingKey;
-let accountsRenderingKey, savingReady = false, preparing = false;
+let accountsRenderingKey, templatesRenderingKey, savingReady = false, preparing = false, templateImageData;
 function renderBrowserMode() {
   const existing = $('browser-mode').value === 'existing';
   $('existing-profile-settings').hidden = !existing;
@@ -77,6 +77,70 @@ function renderAccounts() {
   $('gemini-accounts').replaceChildren(fragment);
 }
 function node(tag, className, text) { const element = document.createElement(tag); if (className) element.className = className; if (text !== undefined) element.textContent = text; return element; }
+function paletteSwatches(tone) {
+  const wrap = node('span', 'tone-swatches');
+  for (const color of tone?.colors || []) { const swatch = node('i'); swatch.style.backgroundColor = color; swatch.title = color; wrap.append(swatch); }
+  return wrap;
+}
+function fillTemplateSelectors() {
+  const templates = state.templates || []; const selectedId = $('template-select').value || state.activeTemplateId || templates[0]?.id;
+  $('template-select').replaceChildren(...templates.map(template => { const option = node('option', '', template.title); option.value = template.id; return option; }));
+  $('template-select').value = templates.some(template => template.id === selectedId) ? selectedId : templates[0]?.id || '';
+  const template = templates.find(item => item.id === $('template-select').value);
+  const selectedTone = $('tone-select').value || (template?.id === state.activeTemplateId ? state.activeToneId : '') || template?.tones?.[0]?.id;
+  $('tone-select').replaceChildren(...(template?.tones || []).map(tone => { const option = node('option', '', tone.title); option.value = tone.id; return option; }));
+  $('tone-select').value = template?.tones?.some(tone => tone.id === selectedTone) ? selectedTone : template?.tones?.[0]?.id || '';
+  const tone = template?.tones?.find(item => item.id === $('tone-select').value);
+  $('tone-swatches').replaceChildren(...[...(tone?.colors || [])].map(color => { const swatch = node('i'); swatch.style.backgroundColor = color; swatch.title = color; return swatch; }));
+  $('active-template-image').src = template?.imageUrl || '';
+  $('active-template-image').hidden = !template;
+  $('use-template').disabled = active() || !template;
+}
+function renderTemplateLibrary(force = false) {
+  const key = JSON.stringify(state.templates || []); if (!force && key === templatesRenderingKey) return; templatesRenderingKey = key;
+  const fragment = document.createDocumentFragment();
+  for (const template of state.templates || []) {
+    const card = node('article', `template-card${template.id === state.activeTemplateId ? ' selected' : ''}`);
+    const image = node('img'); image.src = template.imageUrl; image.alt = `Стиль ${template.title}`; image.loading = 'lazy';
+    const heading = node('div', 'template-card-heading'); heading.append(node('h3', '', template.title), node('small', '', template.builtin ? 'Вбудований' : 'Власний'));
+    const toneSelect = node('select'); toneSelect.setAttribute('aria-label', `Палітра для ${template.title}`);
+    for (const tone of template.tones) { const option = node('option', '', tone.title); option.value = tone.id; toneSelect.append(option); }
+    toneSelect.value = template.id === state.activeTemplateId ? state.activeToneId : template.tones[0].id;
+    const swatches = paletteSwatches(template.tones.find(tone => tone.id === toneSelect.value));
+    toneSelect.addEventListener('change', () => swatches.replaceChildren(...paletteSwatches(template.tones.find(tone => tone.id === toneSelect.value)).children));
+    const controls = node('div', 'template-card-actions');
+    const use = node('button', 'primary', 'Застосувати'); use.disabled = active(); use.addEventListener('click', () => action('template-use', { id: template.id, toneId: toneSelect.value }).then(() => { dirty = false; $('templates-dialog').close(); notify('Шаблон і палітру застосовано.'); }).catch(error => notify(error.message)));
+    const edit = node('button', 'secondary', 'Редагувати'); edit.disabled = active(); edit.addEventListener('click', () => { $('templates-dialog').close(); openTemplateEditor(template); });
+    const duplicate = node('button', 'secondary', 'Дублювати'); duplicate.disabled = active(); duplicate.addEventListener('click', () => action('template-duplicate', { id: template.id }).then(() => notify('Створено копію шаблону.')).catch(error => notify(error.message)));
+    const remove = node('button', 'secondary danger', 'Видалити'); remove.disabled = active(); remove.addEventListener('click', () => { if (window.confirm(`Видалити шаблон «${template.title}»?`)) action('template-delete', { id: template.id }).then(() => notify('Шаблон видалено.')).catch(error => notify(error.message)); });
+    controls.append(use, edit, duplicate, remove); card.append(image, heading, toneSelect, swatches, node('p', '', template.prompt), controls); fragment.append(card);
+  }
+  if (!state.templates?.length) fragment.append(node('div', 'empty', 'Бібліотека порожня. Створіть шаблон або відновіть вбудовані.'));
+  $('template-grid').replaceChildren(fragment);
+}
+function defaultTones() {
+  return [
+    ['Natural neutral', 'Use warm ivory, stone, sand, taupe and restrained sage accents. Keep the background light but visibly warm, not pure white.', '#eee5d8,#c7b49a,#8e7b68,#7b8764'],
+    ['Blue & violet', 'Use navy, indigo, dusty violet and soft blue-gray, with a pale blue-gray background.', '#26395d,#55588e,#8c7fa6,#ccd5df'],
+    ['Warm earth', 'Use terracotta, muted ochre, clay, sand and olive, with a warm cream background.', '#a94f35,#c58a3d,#d8b58d,#6e744b'],
+    ['Fresh muted', 'Use sage green, muted teal, dusty coral and pale sky blue, with a softly tinted background.', '#819d78,#4f8584,#c47d70,#b9ced8']
+  ].map(([title, prompt, colors], index) => ({ id: `tone-${index + 1}`, title, prompt, colors: colors.split(',') }));
+}
+function renderToneFields(tones) {
+  const fragment = document.createDocumentFragment();
+  tones.forEach((tone, index) => {
+    const field = node('fieldset', 'tone-field'); field.dataset.toneId = tone.id || `tone-${index + 1}`; field.append(node('legend', '', `Палітра ${index + 1}`));
+    const title = node('input'); title.value = tone.title; title.maxLength = 80; title.required = true; title.dataset.part = 'title'; title.placeholder = 'Назва палітри';
+    const prompt = node('textarea'); prompt.value = tone.prompt; prompt.maxLength = 1000; prompt.rows = 3; prompt.required = true; prompt.dataset.part = 'prompt'; prompt.placeholder = 'Інструкція щодо кольорів';
+    const colors = node('input'); colors.value = tone.colors.join(','); colors.required = true; colors.dataset.part = 'colors'; colors.pattern = '#[0-9A-Fa-f]{6}(,\\s*#[0-9A-Fa-f]{6}){3}'; colors.placeholder = '#112233,#445566,#778899,#aabbcc';
+    field.append(title, prompt, colors); fragment.append(field);
+  }); $('template-tone-fields').replaceChildren(fragment);
+}
+function openTemplateEditor(template) {
+  templateImageData = undefined; $('template-id').value = template?.id || ''; $('template-title').value = template?.title || ''; $('template-prompt').value = template?.prompt || '';
+  $('template-editor-title').textContent = template ? 'Редагувати шаблон' : 'Новий шаблон'; $('template-image-preview').src = template?.imageUrl || ''; $('template-image-preview').hidden = !template; $('template-image').value = ''; $('template-image').required = !template;
+  renderToneFields(template?.tones || defaultTones()); $('template-editor-dialog').showModal();
+}
 function notify(message) { $('notice').textContent = message; $('notice').hidden = false; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => $('notice').hidden = true, 7500); }
 async function request(action, body = {}) {
   const response = await fetch(`/api/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -166,6 +230,12 @@ function renderDetail() {
   if (['done', 'exists'].includes(job.status)) {
     const regenerate = node('button', 'outline', '↻ Перегенерувати'); regenerate.disabled = active();
     regenerate.addEventListener('click', () => action('job-regenerate', { number: job.number }).then(() => notify('Рядок поставлено в чергу. Попереднє зображення збережено в папці _previous.')).catch(error => notify(error.message))); controls.append(regenerate);
+    const asTemplate = node('button', 'outline', 'Використати як обкладинку шаблону'); asTemplate.disabled = active() || !state.templates?.length;
+    asTemplate.addEventListener('click', () => {
+      $('template-image-job').value = job.number;
+      $('template-image-target').replaceChildren(...state.templates.map(template => { const option = node('option', '', template.title); option.value = template.id; return option; }));
+      $('template-image-dialog').showModal();
+    }); controls.append(asTemplate);
   }
   const remove = node('button', 'outline danger', 'Видалити рядок'); remove.disabled = active() || state.jobs.length === 1;
   remove.addEventListener('click', () => {
@@ -205,6 +275,7 @@ function render() {
   $('tools-status').textContent = `${state.oracle ? 'Сесії Chrome: Oracle 0.21.6' : '✕ Oracle відсутній'} · ${state.chrome ? '✓ Chrome' : '✕ Chrome відсутній'}`;
   $('output-dir').textContent = state.outputDir;
   if (!dirty) { $('style').value = state.style; $('range').value = state.range; $('batch-size').value = state.batchSize ?? 25; $('request-delay').value = state.requestDelaySeconds ?? 30; $('background').checked = state.background !== false; $('diagnostics').checked = state.diagnostics === true; $('output-folder').value = state.outputDir; }
+  fillTemplateSelectors(); renderTemplateLibrary();
   validateRange();
   if (!dirty) {
     $('browser-mode').value = state.browserMode || 'dedicated';
@@ -212,7 +283,7 @@ function render() {
     for (const profile of state.chromeProfiles || []) { const option = node('option', '', `${profile.name}${profile.account ? ' · ' + profile.account : ''}`); option.value = profile.id; options.push(option); }
     $('chrome-profile').replaceChildren(...options); $('chrome-profile').value = state.chromeProfile || '';
   }
-  for (const id of ['style', 'range', 'range-all', 'range-unfinished', 'batch-size', 'request-delay', 'background', 'diagnostics', 'clear-diagnostics', 'output-folder', 'choose-output-folder', 'save-output-folder', 'save-settings', 'scan', 'login', 'import-button']) $(id).disabled = active() || savingReady || preparing;
+  for (const id of ['style', 'range', 'range-all', 'range-unfinished', 'batch-size', 'request-delay', 'background', 'diagnostics', 'clear-diagnostics', 'output-folder', 'choose-output-folder', 'save-output-folder', 'save-settings', 'scan', 'login', 'import-button', 'template-select', 'tone-select', 'use-template', 'manage-templates']) $(id).disabled = active() || savingReady || preparing;
   $('save-ready').disabled = active() || savingReady || !state.jobs.some(job => ['done', 'exists'].includes(job.status));
   renderBrowserMode();
   $('start').textContent = preparing ? 'Перевіряємо готовність…' : `▶ Генерувати пакет · ${state.nextBatch ?? state.queued}`;
@@ -241,6 +312,36 @@ async function saveSettings(command = 'settings') {
   dirty = false; rangeDirty = false; render();
 }
 $('style').addEventListener('input', () => { dirty = true; renderDetail(); }); $('range').addEventListener('input', () => { dirty = true; rangeDirty = $('range').value !== state.range; validateRange(); });
+$('template-select').addEventListener('change', fillTemplateSelectors);
+$('tone-select').addEventListener('change', fillTemplateSelectors);
+listen('use-template', async () => { await action('template-use', { id: $('template-select').value, toneId: $('tone-select').value }); dirty = false; notify('Шаблон і палітру застосовано до нових генерацій.'); });
+listen('manage-templates', () => { renderTemplateLibrary(true); $('templates-dialog').showModal(); });
+listen('close-templates', () => $('templates-dialog').close());
+listen('add-template', () => { $('templates-dialog').close(); openTemplateEditor(); });
+listen('restore-templates', async () => { if (!window.confirm('Відновити початкові вбудовані шаблони? Власні шаблони залишаться.')) return; await action('template-restore'); renderTemplateLibrary(true); notify('Вбудовані шаблони відновлено.'); });
+listen('close-template-editor', () => $('template-editor-dialog').close());
+$('template-image').addEventListener('change', async event => {
+  try {
+    const file = event.target.files[0]; if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { event.target.value = ''; throw new Error('Обкладинка має бути до 10 МБ.'); }
+    templateImageData = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(new Error('Не вдалося прочитати обкладинку.')); reader.readAsDataURL(file); });
+    $('template-image-preview').src = templateImageData; $('template-image-preview').hidden = false;
+  } catch (error) { notify(error.message); }
+});
+$('template-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const tones = [...$('template-tone-fields').querySelectorAll('.tone-field')].map((field, index) => ({ id: field.dataset.toneId || `tone-${index + 1}`, title: field.querySelector('[data-part="title"]').value, prompt: field.querySelector('[data-part="prompt"]').value, colors: field.querySelector('[data-part="colors"]').value.split(',').map(color => color.trim()) }));
+    const id = $('template-id').value; const body = { title: $('template-title').value, prompt: $('template-prompt').value, tones, ...(templateImageData ? { imageData: templateImageData } : {}) };
+    await action(id ? 'template-update' : 'template-add', id ? { id, ...body } : body); templateImageData = undefined; $('template-editor-dialog').close(); renderTemplateLibrary(true); $('templates-dialog').showModal(); notify(id ? 'Шаблон оновлено.' : 'Шаблон створено.');
+  } catch (error) { notify(error.message); }
+});
+listen('close-template-image', () => $('template-image-dialog').close());
+$('template-image-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  try { await action('template-preview-job', { id: $('template-image-target').value, number: Number($('template-image-job').value) }); $('template-image-dialog').close(); notify('Обкладинку шаблону оновлено.'); }
+  catch (error) { notify(error.message); }
+});
 listen('range-all', () => setRange(''));
 listen('range-unfinished', () => {
   const numbers = state.jobs.filter(job => !['done', 'exists'].includes(job.status)).map(job => job.number);
